@@ -25,6 +25,7 @@ function AuthScreen({ onAuth }) {
   const [email,    setEmail]    = useState("");
   const [password, setPassword] = useState("");
   const [loading,  setLoading]  = useState(false);
+  const [showPwd,  setShowPwd]  = useState(false);
   const [error,    setError]    = useState("");
   const [message,  setMessage]  = useState("");
 
@@ -166,17 +167,24 @@ function AuthScreen({ onAuth }) {
             {mode !== "reset" && (
               <div style={{ marginBottom: 20 }}>
                 <div style={{ fontSize: 7, letterSpacing: 2, color: C.dim, marginBottom: 6 }}>PASSWORD</div>
-                <input
-                  type="password" value={password} onChange={e => setPassword(e.target.value)}
-                  required placeholder="••••••••"
-                  style={{
-                    width: "100%", background: "#080A0D",
-                    border: `1px solid ${C.border}`, borderRadius: 3,
-                    padding: "10px 12px", fontFamily: mono, fontSize: 12,
-                    color: C.text, outline: "none",
-                    boxSizing: "border-box",
-                  }}
-                />
+                <div style={{position:"relative"}}>
+                  <input
+                    type={showPwd?"text":"password"} value={password} onChange={e => setPassword(e.target.value)}
+                    required placeholder="••••••••"
+                    style={{
+                      width: "100%", background: "#080A0D",
+                      border: `1px solid ${C.border}`, borderRadius: 3,
+                      padding: "10px 40px 10px 12px", fontFamily: mono, fontSize: 12,
+                      color: C.text, outline: "none",
+                      boxSizing: "border-box",
+                    }}
+                  />
+                  <button type="button" onClick={()=>setShowPwd(v=>!v)} style={{
+                    position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",
+                    background:"none",border:"none",cursor:"pointer",
+                    color:C.dim,fontSize:14,padding:0,lineHeight:1
+                  }}>{showPwd?"🙈":"👁"}</button>
+                </div>
               </div>
             )}
 
@@ -655,6 +663,7 @@ async function fetchMarketNews(contract, finnhubKey) {
 function NewsFeed({ contract, cc, finnhubKey="" }) {
   const [items,    setItems]    = useState([]);
   const [loading,  setLoading]  = useState(false);
+  const [showPwd,  setShowPwd]  = useState(false);
   const [error,    setError]    = useState(null);
   const [fetched,  setFetched]  = useState(null);
   const [expanded, setExpanded] = useState(null);
