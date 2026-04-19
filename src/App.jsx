@@ -3607,3 +3607,4 @@ export default function App() {
 
   return <TradingPlan user={user} onLogout={handleLogout} />;
 }
+ 
