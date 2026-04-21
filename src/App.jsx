@@ -1266,44 +1266,28 @@ function TradingPlan({ user, onLogout }) {
   // Updates every 30s when feed is active
   // Falls back silently — manual entry always works
 
+  const FINNHUB_KEY = 'd7jivp1r01qhf13f283gd7jivp1r01qhf13f2840';
+
   const fetchYahooPrice = async (sym) => {
     if(!sym) return null;
     try {
-      // Use Anthropic API to get live price data for the contract
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true",
-        },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 200,
-          tools: [{ type: "web_search_20250305", name: "web_search" }],
-          messages: [{
-            role: "user",
-            content: `Search for the current price of ${sym} futures right now. Return ONLY a JSON object with no markdown, no explanation: {"last":0.00,"high":0.00,"low":0.00,"change":0.00,"changePct":0.00} using the actual current market prices.`
-          }]
-        })
-      });
+      // Finnhub uses different symbol format — convert Yahoo sym to Finnhub
+      // Yahoo: ES=F -> Finnhub: ES1! (continuous contract)
+      const finnhubSym = sym.replace('=F','1!');
+      const url = `https://finnhub.io/api/v1/quote?symbol=${finnhubSym}&token=${FINNHUB_KEY}`;
+      const res = await fetch(url, {signal: AbortSignal.timeout(8000)});
       if(!res.ok) return null;
       const data = await res.json();
-      const text = (data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("").trim();
-      const clean = text.replace(/\`\`\`json|\`\`\`/g,"").trim();
-      const s = clean.indexOf("{"), e = clean.lastIndexOf("}");
-      if(s===-1||e===-1) return null;
-      const prices = JSON.parse(clean.slice(s,e+1));
-      if(!prices.last) return null;
+      if(!data.c || data.c === 0) return null;
       return {
-        last:      prices.last,
-        high:      prices.high      || prices.last,
-        low:       prices.low       || prices.last,
-        open:      prices.open      || prices.last,
-        change:    prices.change    || 0,
-        changePct: prices.changePct || 0,
+        last:      data.c  || 0,  // current price
+        high:      data.h  || 0,  // day high
+        low:       data.l  || 0,  // day low
+        open:      data.o  || 0,  // open
+        change:    data.d  || 0,  // change
+        changePct: data.dp || 0,  // change percent
         volume:    0,
-        prevClose: prices.last - (prices.change||0),
+        prevClose: data.pc || 0,  // previous close
         time:      new Date().toTimeString().slice(0,8),
       };
     } catch(_) { return null; }
