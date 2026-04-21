@@ -824,6 +824,15 @@ function QuickPriceEntry({ contract, cc, d2, liveData, onApply }) {
   const [hi,  setHi]  = useState("");
   const [lo,  setLo]  = useState("");
 
+  // Auto-populate fields when live data arrives
+  useEffect(()=>{
+    if(liveData?.live && liveData.price && liveData.price > 0){
+      setPx(parseFloat(liveData.price).toFixed(d2));
+      if(liveData.high && liveData.high > 0) setHi(parseFloat(liveData.high).toFixed(d2));
+      if(liveData.low  && liveData.low  > 0) setLo(parseFloat(liveData.low).toFixed(d2));
+    }
+  },[liveData?.price, liveData?.high, liveData?.low, liveData?.live]);
+
   const ready = px && hi && lo &&
     parseFloat(px) > 0 && parseFloat(hi) > 0 && parseFloat(lo) > 0 &&
     parseFloat(hi) >= parseFloat(lo);
@@ -1286,7 +1295,7 @@ function TradingPlan({ user, onLogout }) {
           tools: [{ type: "web_search_20250305", name: "web_search" }],
           messages: [{
             role: "user",
-            content: `Search for the current ${contractName} futures price. Return ONLY valid JSON, no markdown: {"last":0.00,"high":0.00,"low":0.00,"change":0.00,"changePct":0.00}`
+            content: `Search for current ${contractName} futures prices today. Find the current last price, today's session high, today's session low, and the daily change. Return ONLY this exact JSON with real numbers, no markdown, no explanation: {"last":0.00,"high":0.00,"low":0.00,"change":0.00,"changePct":0.00}. The high must be >= last >= low.`
           }]
         })
       });
