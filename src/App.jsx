@@ -1320,9 +1320,12 @@ function TradingPlan({ user, onLogout }) {
     } catch(_) { return null; }
   };
 
+  const isFetchingRef = useRef(false);
   const fetchLivePrice = async () => {
     const sym = contract.yahooSym;
     if(!sym) return;
+    if(isFetchingRef.current) return; // prevent concurrent requests
+    isFetchingRef.current = true;
     setLiveData(p => p ? {...p, fetching:true} : {fetching:true});
     const prices = await fetchYahooPrice(sym);
     if(!prices || !prices.last) {
@@ -1350,6 +1353,7 @@ function TradingPlan({ user, onLogout }) {
       error:     false,
       source:    "Yahoo Finance",
     });
+    isFetchingRef.current = false;
   };
 
   // ── Auto-fetch on contract change (no credentials needed) ────
@@ -1360,8 +1364,10 @@ function TradingPlan({ user, onLogout }) {
   // ── Start/stop live feed ──────────────────────────────────────
   useEffect(()=>{
     if(liveFeed){
-      fetchLivePrice();
-      liveIntervalRef.current = setInterval(fetchLivePrice, 30000);
+      // Small delay before first fetch to avoid hammering on mount
+      const timer = setTimeout(()=>fetchLivePrice(), 500);
+      liveIntervalRef.current = setInterval(fetchLivePrice, 60000); // 60s interval
+      return ()=>{ clearTimeout(timer); if(liveIntervalRef.current) clearInterval(liveIntervalRef.current); };
     } else {
       if(liveIntervalRef.current){ clearInterval(liveIntervalRef.current); liveIntervalRef.current=null; }
     }
