@@ -1268,29 +1268,38 @@ function TradingPlan({ user, onLogout }) {
 
   const fetchYahooPrice = async (sym) => {
     if(!sym) return null;
-    try {
-      // Use allorigins CORS proxy to bypass browser CORS restriction
-      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1m&range=1d`;
-      const proxy = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
-      const res = await fetch(proxy, {signal: AbortSignal.timeout(8000)});
-      if(!res.ok) return null;
-      const wrapper = await res.json();
-      const data    = JSON.parse(wrapper.contents);
-      const result  = data?.chart?.result?.[0];
-      if(!result) return null;
-      const meta    = result.meta;
-      return {
-        last:      meta.regularMarketPrice      || 0,
-        high:      meta.regularMarketDayHigh    || 0,
-        low:       meta.regularMarketDayLow     || 0,
-        open:      meta.regularMarketOpen       || 0,
-        change:    meta.regularMarketChange     || 0,
-        changePct: meta.regularMarketChangePercent || 0,
-        volume:    meta.regularMarketVolume     || 0,
-        prevClose: meta.chartPreviousClose      || 0,
-        time:      new Date().toTimeString().slice(0,8),
-      };
-    } catch(_) { return null; }
+    // Try multiple CORS proxies in sequence
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1m&range=1d`;
+    const proxies = [
+      `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
+      `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
+      `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+    ];
+    for(const proxy of proxies){
+      try {
+        const res = await fetch(proxy, {signal: AbortSignal.timeout(8000)});
+        if(!res.ok) continue;
+        const raw = await res.json();
+        // Handle both allorigins wrapper and direct response
+        const data = raw?.contents ? JSON.parse(raw.contents) : raw;
+        const result = data?.chart?.result?.[0];
+        if(!result) continue;
+        const meta = result.meta;
+        if(!meta?.regularMarketPrice) continue;
+        return {
+          last:      meta.regularMarketPrice         || 0,
+          high:      meta.regularMarketDayHigh       || 0,
+          low:       meta.regularMarketDayLow        || 0,
+          open:      meta.regularMarketOpen          || 0,
+          change:    meta.regularMarketChange        || 0,
+          changePct: meta.regularMarketChangePercent || 0,
+          volume:    meta.regularMarketVolume        || 0,
+          prevClose: meta.chartPreviousClose         || 0,
+          time:      new Date().toTimeString().slice(0,8),
+        };
+      } catch(_) { continue; }
+    }
+    return null;
   };
 
   const fetchLivePrice = async () => {
@@ -3616,4 +3625,3 @@ export default function App() {
 
   return <TradingPlan user={user} onLogout={handleLogout} />;
 }
- 
