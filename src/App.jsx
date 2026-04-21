@@ -1266,28 +1266,46 @@ function TradingPlan({ user, onLogout }) {
   // Updates every 30s when feed is active
   // Falls back silently — manual entry always works
 
-  const FINNHUB_KEY = 'd7jivp1r01qhf13f283gd7jivp1r01qhf13f2840';
-
   const fetchYahooPrice = async (sym) => {
     if(!sym) return null;
     try {
-      // Finnhub uses different symbol format — convert Yahoo sym to Finnhub
-      // Yahoo: ES=F -> Finnhub: ES1! (continuous contract)
-      const finnhubSym = sym.replace('=F','1!');
-      const url = `https://finnhub.io/api/v1/quote?symbol=${finnhubSym}&token=${FINNHUB_KEY}`;
-      const res = await fetch(url, {signal: AbortSignal.timeout(8000)});
+      const apiKey = import.meta.env.VITE_ANTHROPIC_KEY;
+      if(!apiKey) return null;
+      const contractName = sym.replace('=F','');
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
+        },
+        body: JSON.stringify({
+          model: "claude-haiku-4-5-20251001",
+          max_tokens: 150,
+          tools: [{ type: "web_search_20250305", name: "web_search" }],
+          messages: [{
+            role: "user",
+            content: `Search for the current ${contractName} futures price. Return ONLY valid JSON, no markdown: {"last":0.00,"high":0.00,"low":0.00,"change":0.00,"changePct":0.00}`
+          }]
+        })
+      });
       if(!res.ok) return null;
       const data = await res.json();
-      if(!data.c || data.c === 0) return null;
+      const text = (data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("").trim();
+      const s = text.indexOf("{"), e = text.lastIndexOf("}");
+      if(s===-1||e===-1) return null;
+      const prices = JSON.parse(text.slice(s,e+1));
+      if(!prices.last) return null;
       return {
-        last:      data.c  || 0,  // current price
-        high:      data.h  || 0,  // day high
-        low:       data.l  || 0,  // day low
-        open:      data.o  || 0,  // open
-        change:    data.d  || 0,  // change
-        changePct: data.dp || 0,  // change percent
+        last:      prices.last,
+        high:      prices.high      || prices.last,
+        low:       prices.low       || prices.last,
+        open:      prices.open      || prices.last,
+        change:    prices.change    || 0,
+        changePct: prices.changePct || 0,
         volume:    0,
-        prevClose: data.pc || 0,  // previous close
+        prevClose: prices.last - (prices.change||0),
         time:      new Date().toTimeString().slice(0,8),
       };
     } catch(_) { return null; }
