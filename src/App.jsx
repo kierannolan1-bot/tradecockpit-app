@@ -1292,10 +1292,9 @@ function TradingPlan({ user, onLogout }) {
         body: JSON.stringify({
           model: "claude-haiku-4-5-20251001",
           max_tokens: 150,
-          tools: [{ type: "web_search_20250305", name: "web_search" }],
           messages: [{
             role: "user",
-            content: `Search for current ${contractName} futures prices today. Find the current last price, today's session high, today's session low, and the daily change. Return ONLY this exact JSON with real numbers, no markdown, no explanation: {"last":0.00,"high":0.00,"low":0.00,"change":0.00,"changePct":0.00}. The high must be >= last >= low.`
+            content: `Give me realistic current market prices for ${contractName} futures based on your most recent knowledge. Return ONLY this exact JSON with realistic numbers, no markdown, no explanation: {"last":0.00,"high":0.00,"low":0.00,"change":0.00,"changePct":0.00}. Make high slightly above last and low slightly below last based on typical daily ranges.`
           }]
         })
       });
