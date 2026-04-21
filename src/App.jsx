@@ -1268,38 +1268,45 @@ function TradingPlan({ user, onLogout }) {
 
   const fetchYahooPrice = async (sym) => {
     if(!sym) return null;
-    // Try multiple CORS proxies in sequence
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1m&range=1d`;
-    const proxies = [
-      `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
-      `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
-      `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
-    ];
-    for(const proxy of proxies){
-      try {
-        const res = await fetch(proxy, {signal: AbortSignal.timeout(8000)});
-        if(!res.ok) continue;
-        const raw = await res.json();
-        // Handle both allorigins wrapper and direct response
-        const data = raw?.contents ? JSON.parse(raw.contents) : raw;
-        const result = data?.chart?.result?.[0];
-        if(!result) continue;
-        const meta = result.meta;
-        if(!meta?.regularMarketPrice) continue;
-        return {
-          last:      meta.regularMarketPrice         || 0,
-          high:      meta.regularMarketDayHigh       || 0,
-          low:       meta.regularMarketDayLow        || 0,
-          open:      meta.regularMarketOpen          || 0,
-          change:    meta.regularMarketChange        || 0,
-          changePct: meta.regularMarketChangePercent || 0,
-          volume:    meta.regularMarketVolume        || 0,
-          prevClose: meta.chartPreviousClose         || 0,
-          time:      new Date().toTimeString().slice(0,8),
-        };
-      } catch(_) { continue; }
-    }
-    return null;
+    try {
+      // Use Anthropic API to get live price data for the contract
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 200,
+          tools: [{ type: "web_search_20250305", name: "web_search" }],
+          messages: [{
+            role: "user",
+            content: `Search for the current price of ${sym} futures right now. Return ONLY a JSON object with no markdown, no explanation: {"last":0.00,"high":0.00,"low":0.00,"change":0.00,"changePct":0.00} using the actual current market prices.`
+          }]
+        })
+      });
+      if(!res.ok) return null;
+      const data = await res.json();
+      const text = (data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("").trim();
+      const clean = text.replace(/\`\`\`json|\`\`\`/g,"").trim();
+      const s = clean.indexOf("{"), e = clean.lastIndexOf("}");
+      if(s===-1||e===-1) return null;
+      const prices = JSON.parse(clean.slice(s,e+1));
+      if(!prices.last) return null;
+      return {
+        last:      prices.last,
+        high:      prices.high      || prices.last,
+        low:       prices.low       || prices.last,
+        open:      prices.open      || prices.last,
+        change:    prices.change    || 0,
+        changePct: prices.changePct || 0,
+        volume:    0,
+        prevClose: prices.last - (prices.change||0),
+        time:      new Date().toTimeString().slice(0,8),
+      };
+    } catch(_) { return null; }
   };
 
   const fetchLivePrice = async () => {
