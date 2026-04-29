@@ -981,6 +981,8 @@ function convertRange(rangeStr, tzOffset) {
 function TradingPlan({ user, onLogout }) {
   const [tab, setTab] = useState("pre");
   const [savedToday, setSavedToday]     = useState(false);
+  const [captures,   setCaptures]       = useState([]); // {id, file, url, timestamp, matchedTrade, note}
+  const [captureDrag, setCaptureDrag]   = useState(false);
   const settingsLoaded                  = useRef(false); // guard against save-before-load race
   const [saveStatus, setSaveStatus]     = useState("idle"); // idle | saving | saved | error
   const [connStatus, setConnStatus]     = useState("idle"); // idle | testing | connected | failed
@@ -1401,7 +1403,7 @@ function TradingPlan({ user, onLogout }) {
   const biasCol=bias==="bull"?"#00FFB2":bias==="bear"?"#FF6B6B":"#FFD700";
   const pnlCol=stats.pnl>=0?"#00FFB2":"#FF6B6B";
 
-  const TABS=[{id:"pre",icon:"◈",label:"PRE / LIVE"},{id:"calc",icon:"▣",label:"RISK CALC"},{id:"log",icon:"◐",label:"TRADE LOG"},{id:"prop",icon:"◍",label:"PROP FIRM"},{id:"news",icon:"◉",label:"NEWS"},{id:"review",icon:"◆",label:"REVIEW"},{id:"settings",icon:"⚙",label:"SETTINGS"}];
+  const TABS=[{id:"pre",icon:"◈",label:"PRE / LIVE"},{id:"calc",icon:"▣",label:"RISK CALC"},{id:"log",icon:"◐",label:"TRADE LOG"},{id:"capture",icon:"⬡",label:"CAPTURE"},{id:"prop",icon:"◍",label:"PROP FIRM"},{id:"news",icon:"◉",label:"NEWS"},{id:"review",icon:"◆",label:"REVIEW"},{id:"settings",icon:"⚙",label:"SETTINGS"}];
 
   return (
     <div style={{minHeight:"100vh",background:"#080A0D",fontFamily:"'IBM Plex Mono','Courier New',monospace",color:"#CBD5E1",fontSize:12}}>
@@ -2099,8 +2101,8 @@ function TradingPlan({ user, onLogout }) {
           </div>
 
           {/* Session Price Entry — from NinjaTrader */}
-          {/* Live feed toggle — only shown when connected */}
-          {(()=>true)()&&(
+          {/* Live feed toggle — temporarily hidden, re-enable when rate limits relax */}
+          {false&&(
             <div style={{
               display:"flex",alignItems:"center",justifyContent:"space-between",
               background: liveFeed?"#00FFB210":"#0D1117",
@@ -2942,6 +2944,197 @@ function TradingPlan({ user, onLogout }) {
         })()}
 
         {/* ═══ NEWS ════════════════════════════════════════════════ */}
+        {tab==="capture"&&(()=>{
+
+          const handleCaptureDrop = (e) => {
+            e.preventDefault();
+            setCaptureDrag(false);
+            const files = Array.from(e.dataTransfer?.files||e.target?.files||[]);
+            files.forEach(file => {
+              if(!file.type.startsWith("image/")) return;
+              const url  = URL.createObjectURL(file);
+              const ts   = file.lastModified || Date.now();
+              // Auto-match to nearest trade by timestamp
+              const matched = trades.reduce((best, t) => {
+                const tTime = new Date(t.date + " " + (t.time||"00:00")).getTime();
+                const diff  = Math.abs(tTime - ts);
+                if(!best || diff < best.diff) return {trade:t, diff};
+                return best;
+              }, null);
+              setCaptures(prev => [{
+                id:           Date.now() + Math.random(),
+                file:         file.name,
+                url,
+                timestamp:    ts,
+                matchedTrade: matched?.trade || null,
+                note:         "",
+                confirmed:    false,
+              }, ...prev]);
+            });
+          };
+
+          const handlePaste = (e) => {
+            const items = Array.from(e.clipboardData?.items||[]);
+            const img   = items.find(i => i.type.startsWith("image/"));
+            if(!img) return;
+            const file  = img.getAsFile();
+            const url   = URL.createObjectURL(file);
+            const ts    = Date.now();
+            const matched = trades.reduce((best, t) => {
+              const tTime = new Date(t.date + " " + (t.time||"00:00")).getTime();
+              const diff  = Math.abs(tTime - ts);
+              if(!best || diff < best.diff) return {trade:t, diff};
+              return best;
+            }, null);
+            setCaptures(prev => [{
+              id:           Date.now() + Math.random(),
+              file:         "clipboard.png",
+              url,
+              timestamp:    ts,
+              matchedTrade: matched?.trade || null,
+              note:         "",
+              confirmed:    false,
+            }, ...prev]);
+          };
+
+          return (
+            <div onPaste={handlePaste}>
+
+              {/* Header */}
+              <div style={{marginBottom:14}}>
+                <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:"#E2E8F0",letterSpacing:1,marginBottom:4}}>
+                  TRADE CAPTURE
+                </div>
+                <div style={{fontSize:9,color:"#4A5568",lineHeight:1.6}}>
+                  Drag & drop your screenshots — or paste from clipboard. We match them to your trades automatically.
+                </div>
+              </div>
+
+              {/* Drop zone */}
+              <div
+                onDragOver={e=>{e.preventDefault();setCaptureDrag(true);}}
+                onDragLeave={()=>setCaptureDrag(false)}
+                onDrop={handleCaptureDrop}
+                style={{
+                  border:`2px dashed ${captureDrag?"#00FFB2":"#1E2530"}`,
+                  borderRadius:6,
+                  padding:"40px 20px",
+                  textAlign:"center",
+                  marginBottom:14,
+                  background:captureDrag?"#00FFB208":"#0D1117",
+                  transition:"all .2s",
+                  cursor:"pointer",
+                }}
+                onClick={()=>document.getElementById("capture-file-input").click()}
+              >
+                <div style={{fontSize:32,marginBottom:10}}>⬡</div>
+                <div style={{fontSize:11,color:captureDrag?"#00FFB2":"#4A5568",letterSpacing:1,marginBottom:6}}>
+                  {captureDrag?"DROP IT":"DRAG & DROP SCREENSHOT"}
+                </div>
+                <div style={{fontSize:9,color:"#2A3545",letterSpacing:1}}>
+                  or click to browse · or paste with Ctrl+V
+                </div>
+                <input
+                  id="capture-file-input"
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  style={{display:"none"}}
+                  onChange={e=>handleCaptureDrop({preventDefault:()=>{},dataTransfer:{files:e.target.files}})}
+                />
+              </div>
+
+              {/* Captures list */}
+              {captures.length===0?(
+                <div style={{background:"#0D1117",border:"1px solid #1E2530",borderRadius:4,padding:"24px",textAlign:"center"}}>
+                  <div style={{fontSize:9,color:"#2A3545",letterSpacing:2}}>NO CAPTURES YET</div>
+                  <div style={{fontSize:8,color:"#1E2530",marginTop:6}}>Drop a screenshot above to get started</div>
+                </div>
+              ):(
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {captures.map(cap=>(
+                    <div key={cap.id} style={{
+                      background:"#0D1117",
+                      border:`1px solid ${cap.confirmed?"#00FFB230":"#1E2530"}`,
+                      borderLeft:`3px solid ${cap.confirmed?"#00FFB2":cap.matchedTrade?"#FFD700":"#4A5568"}`,
+                      borderRadius:4,
+                      overflow:"hidden",
+                    }}>
+                      {/* Match banner */}
+                      <div style={{
+                        background:cap.matchedTrade?"#FFD70008":"#0D1117",
+                        padding:"8px 12px",
+                        display:"flex",justifyContent:"space-between",alignItems:"center",
+                        borderBottom:"1px solid #1E2530",
+                      }}>
+                        <div>
+                          {cap.matchedTrade?(
+                            <>
+                              <div style={{fontSize:7,color:"#FFD700",letterSpacing:2,marginBottom:2}}>
+                                AUTO-MATCHED
+                              </div>
+                              <div style={{fontSize:10,color:"#E2E8F0",fontWeight:600}}>
+                                {cap.matchedTrade.symbol||contractId} · {cap.matchedTrade.dir==="long"?"LONG":"SHORT"} · {cap.matchedTrade.grade||"—"}
+                              </div>
+                              <div style={{fontSize:8,color:"#4A5568"}}>
+                                {cap.matchedTrade.date} {cap.matchedTrade.time||""}
+                              </div>
+                            </>
+                          ):(
+                            <>
+                              <div style={{fontSize:7,color:"#4A5568",letterSpacing:2,marginBottom:2}}>NO MATCH FOUND</div>
+                              <div style={{fontSize:9,color:"#2A3545"}}>Log a trade first to enable auto-matching</div>
+                            </>
+                          )}
+                        </div>
+                        <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                          {cap.matchedTrade&&!cap.confirmed&&(
+                            <button onClick={()=>setCaptures(p=>p.map(c=>c.id===cap.id?{...c,confirmed:true}:c))} style={{
+                              background:"#00FFB218",border:"1px solid #00FFB230",borderRadius:3,
+                              padding:"4px 10px",fontSize:8,color:"#00FFB2",cursor:"pointer",
+                              fontFamily:"inherit",letterSpacing:1
+                            }}>✓ CONFIRM</button>
+                          )}
+                          {cap.confirmed&&(
+                            <div style={{fontSize:8,color:"#00FFB2",letterSpacing:1}}>✓ CONFIRMED</div>
+                          )}
+                          <button onClick={()=>setCaptures(p=>p.filter(c=>c.id!==cap.id))} style={{
+                            background:"none",border:"1px solid #1E2530",borderRadius:3,
+                            padding:"4px 8px",fontSize:8,color:"#4A5568",cursor:"pointer",
+                            fontFamily:"inherit"
+                          }}>✕</button>
+                        </div>
+                      </div>
+
+                      {/* Screenshot */}
+                      <img
+                        src={cap.url}
+                        alt="trade capture"
+                        style={{width:"100%",display:"block",maxHeight:300,objectFit:"contain",background:"#080A0D"}}
+                      />
+
+                      {/* Note */}
+                      <div style={{padding:"8px 12px"}}>
+                        <textarea
+                          value={cap.note}
+                          onChange={e=>setCaptures(p=>p.map(c=>c.id===cap.id?{...c,note:e.target.value}:c))}
+                          placeholder="Add a note about this trade..."
+                          style={{
+                            width:"100%",background:"#080A0D",border:"1px solid #1E2530",
+                            borderRadius:3,padding:"7px 9px",fontFamily:"inherit",
+                            fontSize:10,color:"#94A3B8",resize:"none",height:52,
+                            outline:"none",boxSizing:"border-box",
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         {tab==="news"&&(<>
           <NewsFeed contract={contract} cc={cc} finnhubKey={settings?.finnhubKey||""}/>
 
