@@ -285,6 +285,17 @@ const CC = { "Equity":"#00FFB2","Micro":"#38BDF8","Energy":"#FF6B6B","Metals":"#
 const today = () => new Date().toLocaleDateString("en-IE",{weekday:"long",day:"2-digit",month:"short",year:"numeric"});
 const todayKey = () => new Date().toISOString().slice(0,10);
 const fmt  = (n,d=2) => n==null||isNaN(n)?"—":n.toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
+const getSession = (dateStr, timeStr) => {
+  try {
+    const dt = new Date(`${dateStr||new Date().toISOString().slice(0,10)}T${timeStr||"12:00"}:00Z`);
+    const h  = dt.getUTCHours();
+    if(h>=0  && h<7)    return "ASIA";
+    if(h>=7  && h<12)   return "LONDON";
+    if(h>=12 && h<13.5) return "OVERLAP";
+    if(h>=13.5&& h<20)  return "NY";
+    return "AFTER HOURS";
+  } catch { return "NY"; }
+};
 const fmtU = n => n==null||isNaN(n)?"—":"$"+fmt(n);
 const fmtP = (n,d=1) => n==null||isNaN(n)?"—":fmt(n,d)+"%";
 const dec  = c => c.tickSize<0.001?6:c.tickSize<0.01?4:2;
@@ -980,6 +991,11 @@ function convertRange(rangeStr, tzOffset) {
 
 function TradingPlan({ user, onLogout }) {
   const [tab, setTab] = useState("pre");
+  const [mode, setMode] = useState("cockpit"); // cockpit | capture
+  const switchMode = (m) => {
+    setMode(m);
+    setTab(m==="cockpit"?"pre":"capture");
+  };
   const [savedToday, setSavedToday]     = useState(false);
   const [captures,   setCaptures]       = useState([]); // {id, file, url, timestamp, matchedTrade, note}
   const [captureDrag, setCaptureDrag]   = useState(false);
@@ -1405,7 +1421,20 @@ function TradingPlan({ user, onLogout }) {
   const biasCol=bias==="bull"?"#00FFB2":bias==="bear"?"#FF6B6B":"#FFD700";
   const pnlCol=stats.pnl>=0?"#00FFB2":"#FF6B6B";
 
-  const TABS=[{id:"pre",icon:"◈",label:"PRE / LIVE"},{id:"calc",icon:"▣",label:"RISK CALC"},{id:"log",icon:"◐",label:"TRADE LOG"},{id:"capture",icon:"⬡",label:"CAPTURE"},{id:"prop",icon:"◍",label:"PROP FIRM"},{id:"news",icon:"◉",label:"NEWS"},{id:"review",icon:"◆",label:"REVIEW"},{id:"settings",icon:"⚙",label:"SETTINGS"}];
+  const COCKPIT_TABS=[
+    {id:"pre",    icon:"◈", label:"PRE / LIVE"},
+    {id:"calc",   icon:"▣", label:"RISK CALC"},
+    {id:"prop",   icon:"◍", label:"PROP FIRM"},
+    {id:"news",   icon:"◉", label:"NEWS"},
+    {id:"review", icon:"◆", label:"REVIEW"},
+    {id:"settings",icon:"⚙",label:"SETTINGS"},
+  ];
+  const CAPTURE_TABS=[
+    {id:"capture", icon:"⬡", label:"CAPTURE"},
+    {id:"log",     icon:"◐", label:"TRADES"},
+    {id:"settings",icon:"⚙", label:"SETTINGS"},
+  ];
+  const TABS = mode==="cockpit" ? COCKPIT_TABS : CAPTURE_TABS;
 
   return (
     <div style={{minHeight:"100vh",background:"#080A0D",fontFamily:"'IBM Plex Mono','Courier New',monospace",color:"#CBD5E1",fontSize:12}}>
@@ -1428,7 +1457,22 @@ function TradingPlan({ user, onLogout }) {
       <div style={{background:"#0D1117",borderBottom:"1px solid #1E2530",padding:"12px 18px"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:8}}>
           <div>
-            <div style={{fontSize:8,letterSpacing:3,color:"#4A5568",marginBottom:2}}>CME FUTURES TRADER · DAILY SESSION PLAN</div>
+            <div style={{display:"flex",gap:0,marginBottom:6}}>
+              {[["cockpit","COCKPIT"],["capture","CAPTURE"]].map(([m,l])=>(
+                <button key={m} onClick={()=>switchMode(m)} style={{
+                  background:mode===m?"#00FFB215":"transparent",
+                  border:`1px solid ${mode===m?"#00FFB230":"#1E2530"}`,
+                  borderRadius:m==="cockpit"?"3px 0 0 3px":"0 3px 3px 0",
+                  padding:"4px 14px",cursor:"pointer",
+                  fontSize:8,letterSpacing:2,
+                  color:mode===m?"#00FFB2":"#4A5568",
+                  fontFamily:"inherit",transition:"all .15s",
+                }}>{l}</button>
+              ))}
+            </div>
+            <div style={{fontSize:8,letterSpacing:3,color:"#4A5568",marginBottom:2}}>
+              {mode==="cockpit"?"CME FUTURES TRADER · DAILY SESSION PLAN":"TRADE CAPTURE · LOG · REVIEW"}
+            </div>
             <div style={{fontSize:7,letterSpacing:3,color:"#00FFB2",opacity:0.7,marginBottom:2}}>THE EDGE IS IN THE PROCESS</div>
             <div className="bb" style={{fontSize:22,color:"#E2E8F0",lineHeight:1}}>
               TRADE<span style={{color:"#00FFB2"}}>COCKPIT</span>
@@ -2439,6 +2483,14 @@ function TradingPlan({ user, onLogout }) {
                   ))}
                 </div>
               </div>
+              {/* Session auto-detect badge */}
+              <div style={{marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
+                <div style={{fontSize:7,color:"#4A5568",letterSpacing:1}}>SESSION</div>
+                <div style={{fontSize:8,color:"#38BDF8",letterSpacing:1,background:"#38BDF810",border:"1px solid #38BDF820",borderRadius:2,padding:"2px 7px"}}>
+                  {getSession(new Date().toISOString().slice(0,10), new Date().toTimeString().slice(0,5))} · AUTO-DETECTED
+                </div>
+              </div>
+
               {/* Actions */}
               <div style={{display:"flex",gap:6,justifyContent:"space-between"}}>
                 <button onClick={()=>{setShowQuick(false);setShowForm(true);}} style={{
@@ -2448,15 +2500,23 @@ function TradingPlan({ user, onLogout }) {
                 <button
                   disabled={!quickForm.pnl||!quickForm.setup}
                   onClick={()=>{
+                    const now  = new Date();
+                    const date = now.toISOString().slice(0,10);
+                    const time = now.toTimeString().slice(0,5);
+                    const sess = getSession(date, time);
                     const next=[...trades,{
-                      id:Date.now(),
-                      symbol:quickForm.sym,
-                      dir:quickForm.dir,
-                      pnl:parseFloat(quickForm.pnl)||0,
-                      setup:quickForm.setup,
-                      grade:"B",
-                      date:new Date().toISOString().slice(0,10),
-                      time:new Date().toTimeString().slice(0,5),
+                      id:          Date.now(),
+                      symbol:      quickForm.sym,
+                      dir:         quickForm.dir,
+                      pnl:         parseFloat(quickForm.pnl)||0,
+                      setup_type:  quickForm.setup,
+                      setup:       quickForm.setup,
+                      grade:       "B",
+                      date,
+                      time,
+                      session:     sess,
+                      opened_at:   now.toISOString(),
+                      closed_at:   now.toISOString(),
                       entry:"",stop:"",target:"",exit:"",contracts:"1",notes:"",
                     }];
                     setTrades(next);
@@ -3869,7 +3929,7 @@ function TradingPlan({ user, onLogout }) {
 
         {/* ═══ REVIEW ═══════════════════════════════════════════ */}
         {tab==="review"&&(<>
-          {/* Session stats */}
+          {/* ── SESSION SUMMARY ─────────────────────────────── */}
           <div style={{fontSize:8,letterSpacing:3,color:"#4A5568",marginBottom:8}}>SESSION SUMMARY</div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:7,marginBottom:12}}>
             {[
@@ -3884,7 +3944,149 @@ function TradingPlan({ user, onLogout }) {
             ))}
           </div>
 
-          {/* Hard stop gauge */}
+          {/* ── STAGE 1: SETUP PERFORMANCE ──────────────────── */}
+          {(()=>{
+            // Group all trades by setup_type
+            const allTrades = trades.filter(t=>t.setup_type||t.setup);
+            if(allTrades.length===0) return (
+              <div style={{background:"#0D1117",border:"1px solid #1E2530",borderRadius:4,padding:20,textAlign:"center",marginBottom:12}}>
+                <div style={{fontSize:9,color:"#2A3545",letterSpacing:2,marginBottom:4}}>NO SETUP DATA YET</div>
+                <div style={{fontSize:8,color:"#1E2530"}}>Log trades with Quick Add to see setup performance</div>
+              </div>
+            );
+
+            const setupMap = {};
+            allTrades.forEach(t=>{
+              const key = (t.setup_type||t.setup||"UNTAGGED").toUpperCase();
+              if(!setupMap[key]) setupMap[key]={trades:0,wins:0,losses:0,pnl:0,instruments:{},sessions:{},directions:{},grades:{}};
+              const s   = setupMap[key];
+              const pnl = parseFloat(t.pnl)||0;
+              s.trades++;
+              s.pnl += pnl;
+              if(pnl>0) s.wins++; else s.losses++;
+              // instrument
+              const sym = t.symbol||t.sym||"?";
+              s.instruments[sym] = (s.instruments[sym]||0) + pnl;
+              // session
+              const sess = t.session||getSession(t.date,t.time);
+              s.sessions[sess] = (s.sessions[sess]||0) + pnl;
+              // direction
+              const dir = (t.dir||"?").toUpperCase();
+              s.directions[dir] = (s.directions[dir]||0) + pnl;
+              // grade
+              const g = t.grade||"B";
+              s.grades[g] = (s.grades[g]||0)+1;
+            });
+
+            const setups = Object.entries(setupMap).sort((a,b)=>b[1].pnl-a[1].pnl);
+
+            return (
+              <div style={{marginBottom:12}}>
+                <div style={{fontSize:8,letterSpacing:3,color:"#4A5568",marginBottom:8}}>SETUP PERFORMANCE</div>
+                {setups.map(([name,s])=>{
+                  const wr     = s.trades>0?(s.wins/s.trades*100):0;
+                  const col    = s.pnl>0?"#00FFB2":s.pnl===0?"#FFD700":"#FF6B6B";
+                  const avgWin = s.wins>0?(allTrades.filter(t=>(t.setup_type||t.setup||"UNTAGGED").toUpperCase()===name&&parseFloat(t.pnl)>0).reduce((a,t)=>a+parseFloat(t.pnl),0)/s.wins):0;
+                  const avgLoss= s.losses>0?(allTrades.filter(t=>(t.setup_type||t.setup||"UNTAGGED").toUpperCase()===name&&parseFloat(t.pnl)<=0).reduce((a,t)=>a+parseFloat(t.pnl),0)/s.losses):0;
+                  const expect = s.trades>0?s.pnl/s.trades:0;
+                  const bestSym= Object.entries(s.instruments).sort((a,b)=>b[1]-a[1])[0]?.[0]||"—";
+                  const bestSess=Object.entries(s.sessions).sort((a,b)=>b[1]-a[1])[0]?.[0]||"—";
+                  const worstSess=Object.entries(s.sessions).sort((a,b)=>a[1]-b[1])[0]?.[0]||"—";
+
+                  // Stage 3 — interpretation
+                  let insight = null;
+                  if(s.trades>=3){
+                    if(wr<40)  insight = {msg:`Your ${name} setup is underperforming. Win rate below 40% over ${s.trades} trades. Consider pausing or reducing size.`, col:"#FF6B6B"};
+                    else if(wr>=65&&s.pnl>0) insight = {msg:`${name} is your strongest setup. ${wr.toFixed(0)}% win rate. Lean into this.`, col:"#00FFB2"};
+                    if(Object.keys(s.sessions).length>1){
+                      const sessArr = Object.entries(s.sessions).sort((a,b)=>b[1]-a[1]);
+                      if(sessArr[0][1]>0&&sessArr[sessArr.length-1][1]<0){
+                        insight = {msg:`You are profitable on ${name} in ${sessArr[0][0]} session but negative in ${sessArr[sessArr.length-1][0]}. Focus on ${sessArr[0][0]}.`, col:"#FFD700"};
+                      }
+                    }
+                  }
+
+                  return (
+                    <div key={name} style={{
+                      background:"#0D1117",
+                      border:`1px solid ${col}25`,
+                      borderLeft:`3px solid ${col}`,
+                      borderRadius:4,padding:"12px 14px",marginBottom:8
+                    }}>
+                      {/* Header */}
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:10}}>
+                        <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:col,letterSpacing:1}}>{name}</div>
+                        <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,color:col}}>{s.pnl>=0?"+":""}{fmtU(s.pnl)}</div>
+                      </div>
+
+                      {/* Stage 1 — Core stats */}
+                      <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:5,marginBottom:10}}>
+                        {[
+                          ["TRADES",  s.trades,           "#94A3B8"],
+                          ["WINS",    s.wins,              "#00FFB2"],
+                          ["LOSSES",  s.losses,            "#FF6B6B"],
+                          ["WIN RATE",`${wr.toFixed(0)}%`, wr>=50?"#00FFB2":wr>=40?"#FFD700":"#FF6B6B"],
+                          ["EXPECT",  `${expect>=0?"+":""}${fmtU(expect)}`, expect>0?"#00FFB2":"#FF6B6B"],
+                        ].map(([l,v,c])=>(
+                          <div key={l} style={{background:"#080A0D",borderRadius:3,padding:"6px 7px",textAlign:"center"}}>
+                            <div style={{fontSize:6,letterSpacing:1,color:"#2A3545",marginBottom:2}}>{l}</div>
+                            <div style={{fontSize:10,color:c,fontWeight:600}}>{v}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Stage 2 — Context breakdown */}
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:10}}>
+                        {[
+                          ["BEST INSTRUMENT", bestSym,  "#38BDF8"],
+                          ["BEST SESSION",    bestSess,  "#38BDF8"],
+                          ["AVG WIN",  `${avgWin>=0?"+":""}${fmtU(avgWin)}`, "#00FFB2"],
+                          ["AVG LOSS", `${fmtU(avgLoss)}`,                   "#FF6B6B"],
+                        ].map(([l,v,c])=>(
+                          <div key={l} style={{background:"#080A0D",borderRadius:3,padding:"6px 8px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                            <div style={{fontSize:7,color:"#2A3545",letterSpacing:1}}>{l}</div>
+                            <div style={{fontSize:9,color:c,fontWeight:600}}>{v}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Session breakdown */}
+                      {Object.keys(s.sessions).length>0&&(
+                        <div style={{marginBottom:10}}>
+                          <div style={{fontSize:7,color:"#2A3545",letterSpacing:1,marginBottom:5}}>BY SESSION</div>
+                          <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                            {Object.entries(s.sessions).sort((a,b)=>b[1]-a[1]).map(([sess,pnl])=>(
+                              <div key={sess} style={{
+                                background:pnl>0?"#00FFB208":"#FF6B6B08",
+                                border:`1px solid ${pnl>0?"#00FFB220":"#FF6B6B20"}`,
+                                borderRadius:3,padding:"3px 8px",fontSize:8,
+                              }}>
+                                <span style={{color:"#4A5568"}}>{sess} </span>
+                                <span style={{color:pnl>0?"#00FFB2":"#FF6B6B",fontWeight:600}}>{pnl>=0?"+":""}{fmtU(pnl)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Stage 3 — Insight */}
+                      {insight&&(
+                        <div style={{
+                          background:`${insight.col}08`,border:`1px solid ${insight.col}20`,
+                          borderRadius:3,padding:"7px 10px",
+                          fontSize:9,color:insight.col,lineHeight:1.6
+                        }}>
+                          💡 {insight.msg}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+
+          {/* ── DAILY RISK ───────────────────────────────────── */}
           <div style={{background:"#0D1117",border:"1px solid #1E2530",borderRadius:4,padding:"12px 14px",marginBottom:12}}>
             <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
               <div style={{fontSize:8,letterSpacing:3,color:"#4A5568"}}>DAILY RISK CONSUMED</div>
@@ -3904,11 +4106,11 @@ function TradingPlan({ user, onLogout }) {
             ))}
           </div>
 
-          {/* Trade grade breakdown */}
+          {/* ── GRADE BREAKDOWN ─────────────────────────────── */}
           <div style={{background:"#0D1117",border:"1px solid #1E2530",borderRadius:4,padding:"12px 14px",marginBottom:12}}>
             <div style={{fontSize:8,letterSpacing:3,color:"#4A5568",marginBottom:10}}>TRADE QUALITY GRADES</div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
-              {[["A","All criteria met — full confluence","#00FFB2"],["B","Minor deviation — still valid","#FFD700"],["C","Emotional / impulsive — no edge","#FF6B6B"]].map(([g,d,c])=>(
+              {[["A","All criteria met","#00FFB2"],["B","Minor deviation","#FFD700"],["C","Emotional / impulsive","#FF6B6B"]].map(([g,d,c])=>(
                 <div key={g} style={{background:"#080A0D",border:`1px solid ${c}30`,borderRadius:4,padding:"10px",textAlign:"center"}}>
                   <div className="bb" style={{fontSize:24,color:c}}>{stats.grades[g]}</div>
                   <div style={{fontSize:7,letterSpacing:2,color:c,marginBottom:4}}>GRADE {g}</div>
@@ -3916,11 +4118,6 @@ function TradingPlan({ user, onLogout }) {
                 </div>
               ))}
             </div>
-            {stats.tradeCount>0&&(
-              <div style={{marginTop:10,fontSize:8,letterSpacing:1,color:stats.grades.A/stats.tradeCount>=0.8?"#00FFB2":"#FFD700"}}>
-                {Math.round(stats.grades.A/stats.tradeCount*100)||0}% A-GRADE TRADES · TARGET: 80%+
-              </div>
-            )}
           </div>
 
           {/* Session notes */}
@@ -4005,4 +4202,3 @@ export default function App() {
 
   return <TradingPlan user={user} onLogout={handleLogout} />;
 }
- 
