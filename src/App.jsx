@@ -1078,6 +1078,7 @@ function TradingPlan({ user, onLogout }) {
   const [tForm,  setTForm]  = useState({setup:"",dir:"long",entry:"",stop:"",target:"",exit:"",contracts:"1",grade:"A",notes:""});
   const [showForm,setShowForm]=useState(false);
   const [showQuick,setShowQuick]=useState(false);
+  const [lastSavedSetup,setLastSavedSetup]=useState(null); // shows setup card after save
   const [quickForm,setQuickForm]=useState({sym:contractId||"ES",dir:"long",pnl:"",setup:""});
   const [showImport,setShowImport]=useState(false);
 
@@ -2520,6 +2521,7 @@ function TradingPlan({ user, onLogout }) {
                       entry:"",stop:"",target:"",exit:"",contracts:"1",notes:"",
                     }];
                     setTrades(next);
+                    setLastSavedSetup(quickForm.setup);
                     setQuickForm({sym:contractId||"ES",dir:"long",pnl:"",setup:""});
                     setShowQuick(false);
                   }}
@@ -2582,6 +2584,90 @@ function TradingPlan({ user, onLogout }) {
               </div>
             </div>
           )}
+
+          {/* ⚡ SETUP FLASH CARD — shows after every save */}
+          {lastSavedSetup&&(()=>{
+            const key    = lastSavedSetup.toUpperCase();
+            const tagged = trades.filter(t=>(t.setup_type||t.setup||"").toUpperCase()===key);
+            if(!tagged.length) return null;
+            const wins   = tagged.filter(t=>parseFloat(t.pnl)>0).length;
+            const wr     = Math.round((wins/tagged.length)*100);
+            const pnl    = tagged.reduce((s,t)=>s+parseFloat(t.pnl||0),0);
+            const col    = pnl>0?"#00FFB2":"#FF6B6B";
+            // Best session
+            const sessMap={};
+            tagged.forEach(t=>{
+              const s=t.session||getSession(t.date,t.time);
+              sessMap[s]=(sessMap[s]||0)+parseFloat(t.pnl||0);
+            });
+            const sessArr=Object.entries(sessMap).sort((a,b)=>b[1]-a[1]);
+            const bestSess=sessArr[0];
+            const worstSess=sessArr[sessArr.length-1];
+
+            return(
+              <div style={{
+                background:`${col}08`,
+                border:`2px solid ${col}30`,
+                borderLeft:`4px solid ${col}`,
+                borderRadius:6,
+                padding:"16px 18px",
+                marginBottom:12,
+                animation:"fadeSlide .3s ease",
+              }}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
+                  <div>
+                    <div style={{fontSize:7,letterSpacing:3,color:col,marginBottom:4}}>SETUP PERFORMANCE</div>
+                    <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,color:"#E2E8F0",letterSpacing:1}}>{key}</div>
+                  </div>
+                  <button onClick={()=>setLastSavedSetup(null)} style={{
+                    background:"none",border:"none",cursor:"pointer",
+                    fontSize:12,color:"#2A3545",padding:0
+                  }}>✕</button>
+                </div>
+
+                {/* Core numbers */}
+                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6,marginBottom:12}}>
+                  {[
+                    ["TRADES",   tagged.length,        "#94A3B8"],
+                    ["WIN RATE", `${wr}%`,              wr>=50?"#00FFB2":wr>=40?"#FFD700":"#FF6B6B"],
+                    ["NET P&L",  `${pnl>=0?"+":""}${fmtU(pnl)}`, col],
+                    ["EXP/TRADE",`${(pnl/tagged.length)>=0?"+":""}${fmtU(pnl/tagged.length)}`, col],
+                  ].map(([l,v,c])=>(
+                    <div key={l} style={{background:"#080A0D",borderRadius:3,padding:"8px",textAlign:"center"}}>
+                      <div style={{fontSize:6,letterSpacing:1,color:"#2A3545",marginBottom:3}}>{l}</div>
+                      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:16,color:c}}>{v}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Session insights */}
+                {sessArr.length>0&&(
+                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                    {bestSess&&bestSess[1]>0&&(
+                      <div style={{fontSize:9,color:"#00FFB2",lineHeight:1.6}}>
+                        → Works best in <strong>{bestSess[0]}</strong> session ({pnl>=0?"+":""}{fmtU(bestSess[1])})
+                      </div>
+                    )}
+                    {worstSess&&worstSess[1]<0&&worstSess[0]!==bestSess?.[0]&&(
+                      <div style={{fontSize:9,color:"#FF6B6B",lineHeight:1.6}}>
+                        → Fails in <strong>{worstSess[0]}</strong> session ({fmtU(worstSess[1])})
+                      </div>
+                    )}
+                    {tagged.length>=3&&wr<40&&(
+                      <div style={{fontSize:9,color:"#FF6B6B",marginTop:4,lineHeight:1.6}}>
+                        ⚠ {key} is underperforming. Consider reducing size or pausing this setup.
+                      </div>
+                    )}
+                    {tagged.length>=3&&wr>=65&&pnl>0&&(
+                      <div style={{fontSize:9,color:"#00FFB2",marginTop:4,lineHeight:1.6}}>
+                        ✓ {key} is your strongest setup. Lean into this.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Trades list */}
           {trades.length===0&&(
