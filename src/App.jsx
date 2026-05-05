@@ -1061,6 +1061,8 @@ function TradingPlan({ user, onLogout }) {
   const [trades, setTrades] = useState([]);
   const [tForm,  setTForm]  = useState({setup:"",dir:"long",entry:"",stop:"",target:"",exit:"",contracts:"1",grade:"A",notes:""});
   const [showForm,setShowForm]=useState(false);
+  const [showQuick,setShowQuick]=useState(false);
+  const [quickForm,setQuickForm]=useState({sym:contractId||"ES",dir:"long",pnl:"",setup:""});
   const [showImport,setShowImport]=useState(false);
 
   // ── News feed state ───────────────────────────────────────
@@ -2350,19 +2352,19 @@ function TradingPlan({ user, onLogout }) {
               <div style={{fontSize:8,letterSpacing:3,color:"#4A5568",marginBottom:2}}>SESSION TRADE LOG</div>
               <div style={{fontSize:9,color:"#4A5568"}}>{stats.tradeCount} TRADES · {stats.closed} CLOSED · {fmtP(stats.winRate)} WIN RATE</div>
             </div>
-  <div style={{display:"flex",gap:6}}>
-              <button onClick={()=>{setShowImport(v=>!v);setShowForm(false);}} disabled={trades.length>=2} style={{
+            <div style={{display:"flex",gap:6}}>
+              <button onClick={()=>{setShowImport(v=>!v);setShowForm(false);setShowQuick(false);}} disabled={trades.length>=2} style={{
                 background:showImport?"#38BDF818":trades.length>=2?"#111621":"#0D1117",
                 border:`1px solid ${showImport?"#38BDF840":trades.length>=2?"#1E2530":"#2A3545"}`,
                 borderRadius:3,padding:"7px 10px",cursor:trades.length>=2?"not-allowed":"pointer",
                 fontSize:8,letterSpacing:2,color:trades.length>=2?"#2A3545":showImport?"#38BDF8":"#64748B"
               }}>⬆ IMPORT</button>
-              <button onClick={()=>{setShowForm(v=>!v);setShowImport(false);}} disabled={trades.length>=2} style={{
-                background:trades.length>=2?"#111621":"#00FFB218",
+              <button onClick={()=>{setShowQuick(v=>!v);setShowForm(false);setShowImport(false);}} disabled={trades.length>=2} style={{
+                background:showQuick?"#00FFB225":trades.length>=2?"#111621":"#00FFB218",
                 border:`1px solid ${trades.length>=2?"#1E2530":"#00FFB240"}`,
-                borderRadius:3,padding:"7px 10px",cursor:trades.length>=2?"not-allowed":"pointer",
-                fontSize:8,letterSpacing:2,color:trades.length>=2?"#2A3545":"#00FFB2"
-              }}>{trades.length>=2?"MAX 2":"+ ADD"}</button>
+                borderRadius:3,padding:"7px 14px",cursor:trades.length>=2?"not-allowed":"pointer",
+                fontSize:9,letterSpacing:2,color:trades.length>=2?"#2A3545":"#00FFB2",fontWeight:600
+              }}>{trades.length>=2?"MAX 2":"⚡ QUICK ADD"}</button>
             </div>
           </div>
 
@@ -2371,7 +2373,108 @@ function TradingPlan({ user, onLogout }) {
             <ImportPanel onImport={handleImport} existingCount={trades.length}/>
           )}
 
-          {/* Add trade form */}
+          {/* ⚡ QUICK ADD — PRIMARY */}
+          {showQuick&&(
+            <div style={{background:"#0D1117",border:"1px solid #00FFB230",borderLeft:"3px solid #00FFB2",borderRadius:4,padding:"12px 14px",marginBottom:12}}>
+              <div style={{fontSize:8,letterSpacing:3,color:"#00FFB2",marginBottom:10}}>⚡ QUICK ADD</div>
+              {/* Symbol + Direction */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:8}}>
+                <select value={quickForm.sym} onChange={e=>setQuickForm(p=>({...p,sym:e.target.value}))} style={{
+                  background:"#080A0D",border:"1px solid #1E2530",borderRadius:3,
+                  padding:"8px 10px",fontSize:11,color:"#E2E8F0",fontFamily:"inherit",outline:"none"
+                }}>
+                  {["ES","NQ","RTY","YM","GC","CL","6E","MES","MNQ"].map(s=><option key={s} value={s}>{s}</option>)}
+                </select>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:4}}>
+                  {[["long","▲ LONG","#00FFB2"],["short","▼ SHORT","#FF6B6B"]].map(([v,l,c])=>(
+                    <button key={v} onClick={()=>setQuickForm(p=>({...p,dir:v}))} style={{
+                      background:quickForm.dir===v?c+"18":"#080A0D",
+                      border:`1px solid ${quickForm.dir===v?c+"40":"#1E2530"}`,
+                      borderRadius:3,padding:"8px",cursor:"pointer",
+                      fontSize:9,color:quickForm.dir===v?c:"#4A5568",
+                      fontFamily:"inherit",letterSpacing:1,
+                    }}>{l}</button>
+                  ))}
+                </div>
+              </div>
+              {/* P&L quick buttons */}
+              <div style={{marginBottom:8}}>
+                <div style={{fontSize:7,color:"#4A5568",letterSpacing:2,marginBottom:5}}>P&L</div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr) repeat(3,1fr)",gap:4,marginBottom:5}}>
+                  {[100,250,500].map(v=>(
+                    <button key={v} onClick={()=>setQuickForm(p=>({...p,pnl:String(v)}))} style={{
+                      background:quickForm.pnl===String(v)?"#00FFB218":"#080A0D",
+                      border:`1px solid ${quickForm.pnl===String(v)?"#00FFB240":"#1E2530"}`,
+                      borderRadius:3,padding:"7px",cursor:"pointer",fontSize:9,
+                      color:quickForm.pnl===String(v)?"#00FFB2":"#4A5568",fontFamily:"inherit"
+                    }}>+${v}</button>
+                  ))}
+                  {[100,250,500].map(v=>(
+                    <button key={-v} onClick={()=>setQuickForm(p=>({...p,pnl:String(-v)}))} style={{
+                      background:quickForm.pnl===String(-v)?"#FF6B6B18":"#080A0D",
+                      border:`1px solid ${quickForm.pnl===String(-v)?"#FF6B6B40":"#1E2530"}`,
+                      borderRadius:3,padding:"7px",cursor:"pointer",fontSize:9,
+                      color:quickForm.pnl===String(-v)?"#FF6B6B":"#4A5568",fontFamily:"inherit"
+                    }}>-${v}</button>
+                  ))}
+                </div>
+                <input type="number" value={quickForm.pnl} placeholder="Custom P&L"
+                  onChange={e=>setQuickForm(p=>({...p,pnl:e.target.value}))}
+                  style={{width:"100%",background:"#080A0D",border:"1px solid #1E2530",borderRadius:3,
+                    padding:"7px 10px",fontSize:11,color:"#E2E8F0",fontFamily:"inherit",
+                    outline:"none",boxSizing:"border-box"}}/>
+              </div>
+              {/* Setup chips */}
+              <div style={{marginBottom:10}}>
+                <div style={{fontSize:7,color:"#4A5568",letterSpacing:2,marginBottom:5}}>SETUP</div>
+                <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                  {["SWEEP","BREAKOUT","REVERSAL","TREND","ABSORPTION","FADE"].map(s=>(
+                    <button key={s} onClick={()=>setQuickForm(p=>({...p,setup:p.setup===s?"":s}))} style={{
+                      background:quickForm.setup===s?"#A78BFA18":"#080A0D",
+                      border:`1px solid ${quickForm.setup===s?"#A78BFA40":"#1E2530"}`,
+                      borderRadius:3,padding:"4px 10px",cursor:"pointer",
+                      fontSize:8,color:quickForm.setup===s?"#A78BFA":"#4A5568",
+                      fontFamily:"inherit",letterSpacing:1
+                    }}>{s}</button>
+                  ))}
+                </div>
+              </div>
+              {/* Actions */}
+              <div style={{display:"flex",gap:6,justifyContent:"space-between"}}>
+                <button onClick={()=>{setShowQuick(false);setShowForm(true);}} style={{
+                  background:"none",border:"1px solid #1E2530",borderRadius:3,
+                  padding:"7px 12px",fontSize:8,color:"#4A5568",cursor:"pointer",fontFamily:"inherit"
+                }}>+ ADD DETAILS</button>
+                <button
+                  disabled={!quickForm.pnl||!quickForm.setup}
+                  onClick={()=>{
+                    const next=[...trades,{
+                      id:Date.now(),
+                      symbol:quickForm.sym,
+                      dir:quickForm.dir,
+                      pnl:parseFloat(quickForm.pnl)||0,
+                      setup:quickForm.setup,
+                      grade:"B",
+                      date:new Date().toISOString().slice(0,10),
+                      time:new Date().toTimeString().slice(0,5),
+                      entry:"",stop:"",target:"",exit:"",contracts:"1",notes:"",
+                    }];
+                    setTrades(next);
+                    setQuickForm({sym:contractId||"ES",dir:"long",pnl:"",setup:""});
+                    setShowQuick(false);
+                  }}
+                  style={{
+                    background:quickForm.pnl&&quickForm.setup?"#00FFB2":"#1E2530",
+                    border:"none",borderRadius:3,padding:"7px 20px",
+                    fontSize:10,fontWeight:700,letterSpacing:1,
+                    color:quickForm.pnl&&quickForm.setup?"#06080B":"#4A5568",
+                    cursor:quickForm.pnl&&quickForm.setup?"pointer":"not-allowed",fontFamily:"inherit"
+                  }}>⚡ SAVE TRADE</button>
+              </div>
+            </div>
+          )}
+
+          {/* 🧠 ADVANCED FORM — hidden by default */}
           {showForm&&(
             <div style={{background:"#0D1117",border:"1px solid #1E2530",borderLeft:"3px solid #00FFB2",borderRadius:4,padding:"13px 14px",marginBottom:12}}>
               <div style={{fontSize:8,letterSpacing:3,color:"#00FFB2",marginBottom:10}}>NEW TRADE</div>
@@ -2946,68 +3049,77 @@ function TradingPlan({ user, onLogout }) {
         {/* ═══ NEWS ════════════════════════════════════════════════ */}
         {tab==="capture"&&(()=>{
 
+          const SETUPS   = ["SWEEP","BREAKOUT","REVERSAL","TREND","ABSORPTION","FADE"];
+          const SYMBOLS  = ["ES","NQ","RTY","YM","GC","CL","6E","MES","MNQ"];
+          const PNL_QUICK = [100,250,500];
+
           const handleCaptureDrop = (e) => {
             e.preventDefault();
             setCaptureDrag(false);
             const files = Array.from(e.dataTransfer?.files||e.target?.files||[]);
             files.forEach(file => {
               if(!file.type.startsWith("image/")) return;
-              const url  = URL.createObjectURL(file);
-              const ts   = file.lastModified || Date.now();
-              // Auto-match to nearest trade by timestamp
+              const url = URL.createObjectURL(file);
+              const ts  = file.lastModified || Date.now();
               const matched = trades.reduce((best, t) => {
-                const tTime = new Date(t.date + " " + (t.time||"00:00")).getTime();
-                const diff  = Math.abs(tTime - ts);
-                if(!best || diff < best.diff) return {trade:t, diff};
+                const tTime = new Date(t.date+" "+(t.time||"00:00")).getTime();
+                const diff  = Math.abs(tTime-ts);
+                if(!best||diff<best.diff) return {trade:t,diff};
                 return best;
               }, null);
-              setCaptures(prev => [{
-                id:           Date.now() + Math.random(),
-                file:         file.name,
+              setCaptures(prev=>[{
+                id:           Date.now()+Math.random(),
                 url,
                 timestamp:    ts,
-                matchedTrade: matched?.trade || null,
+                matchedTrade: matched?.trade||null,
+                sym:          contractId||"ES",
+                dir:          "long",
+                pnl:          null,
+                setup:        null,
                 note:         "",
                 confirmed:    false,
-              }, ...prev]);
+                showAdvanced: false,
+              },...prev]);
             });
           };
 
           const handlePaste = (e) => {
             const items = Array.from(e.clipboardData?.items||[]);
-            const img   = items.find(i => i.type.startsWith("image/"));
+            const img   = items.find(i=>i.type.startsWith("image/"));
             if(!img) return;
             const file  = img.getAsFile();
             const url   = URL.createObjectURL(file);
             const ts    = Date.now();
-            const matched = trades.reduce((best, t) => {
-              const tTime = new Date(t.date + " " + (t.time||"00:00")).getTime();
-              const diff  = Math.abs(tTime - ts);
-              if(!best || diff < best.diff) return {trade:t, diff};
+            const matched = trades.reduce((best,t)=>{
+              const tTime = new Date(t.date+" "+(t.time||"00:00")).getTime();
+              const diff  = Math.abs(tTime-ts);
+              if(!best||diff<best.diff) return {trade:t,diff};
               return best;
-            }, null);
-            setCaptures(prev => [{
-              id:           Date.now() + Math.random(),
-              file:         "clipboard.png",
+            },null);
+            setCaptures(prev=>[{
+              id:           Date.now()+Math.random(),
               url,
               timestamp:    ts,
-              matchedTrade: matched?.trade || null,
+              matchedTrade: matched?.trade||null,
+              sym:          contractId||"ES",
+              dir:          "long",
+              pnl:          null,
+              setup:        null,
               note:         "",
               confirmed:    false,
-            }, ...prev]);
+              showAdvanced: false,
+            },...prev]);
           };
+
+          const upd = (id,patch) => setCaptures(p=>p.map(c=>c.id===id?{...c,...patch}:c));
 
           return (
             <div onPaste={handlePaste}>
 
               {/* Header */}
-              <div style={{marginBottom:14}}>
-                <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:"#E2E8F0",letterSpacing:1,marginBottom:4}}>
-                  TRADE CAPTURE
-                </div>
-                <div style={{fontSize:9,color:"#4A5568",lineHeight:1.6}}>
-                  Drag & drop your screenshots — or paste from clipboard. We match them to your trades automatically.
-                </div>
+              <div style={{marginBottom:12}}>
+                <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:"#E2E8F0",letterSpacing:1,marginBottom:3}}>TRADE CAPTURE</div>
+                <div style={{fontSize:9,color:"#4A5568"}}>Screenshot → matched → tagged → done. Under 10 seconds.</div>
               </div>
 
               {/* Drop zone */}
@@ -3015,118 +3127,170 @@ function TradingPlan({ user, onLogout }) {
                 onDragOver={e=>{e.preventDefault();setCaptureDrag(true);}}
                 onDragLeave={()=>setCaptureDrag(false)}
                 onDrop={handleCaptureDrop}
+                onClick={()=>document.getElementById("cap-input").click()}
                 style={{
                   border:`2px dashed ${captureDrag?"#00FFB2":"#1E2530"}`,
-                  borderRadius:6,
-                  padding:"40px 20px",
-                  textAlign:"center",
-                  marginBottom:14,
-                  background:captureDrag?"#00FFB208":"#0D1117",
-                  transition:"all .2s",
-                  cursor:"pointer",
+                  borderRadius:6,padding:"32px 20px",textAlign:"center",
+                  marginBottom:12,background:captureDrag?"#00FFB208":"#0D1117",
+                  transition:"all .2s",cursor:"pointer",
                 }}
-                onClick={()=>document.getElementById("capture-file-input").click()}
               >
-                <div style={{fontSize:32,marginBottom:10}}>⬡</div>
-                <div style={{fontSize:11,color:captureDrag?"#00FFB2":"#4A5568",letterSpacing:1,marginBottom:6}}>
-                  {captureDrag?"DROP IT":"DRAG & DROP SCREENSHOT"}
+                <div style={{fontSize:28,marginBottom:8}}>⬡</div>
+                <div style={{fontSize:11,color:captureDrag?"#00FFB2":"#4A5568",letterSpacing:1,marginBottom:4}}>
+                  {captureDrag?"DROP IT":"DRAG & DROP · CLICK · OR CTRL+V"}
                 </div>
-                <div style={{fontSize:9,color:"#2A3545",letterSpacing:1}}>
-                  or click to browse · or paste with Ctrl+V
-                </div>
-                <input
-                  id="capture-file-input"
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  style={{display:"none"}}
-                  onChange={e=>handleCaptureDrop({preventDefault:()=>{},dataTransfer:{files:e.target.files}})}
-                />
+                <div style={{fontSize:8,color:"#2A3545"}}>Screenshot auto-matches to your nearest trade</div>
+                <input id="cap-input" type="file" accept="image/*" multiple style={{display:"none"}}
+                  onChange={e=>handleCaptureDrop({preventDefault:()=>{},dataTransfer:{files:e.target.files}})}/>
               </div>
 
-              {/* Captures list */}
+              {/* Captures */}
               {captures.length===0?(
-                <div style={{background:"#0D1117",border:"1px solid #1E2530",borderRadius:4,padding:"24px",textAlign:"center"}}>
+                <div style={{background:"#0D1117",border:"1px solid #1E2530",borderRadius:4,padding:24,textAlign:"center"}}>
                   <div style={{fontSize:9,color:"#2A3545",letterSpacing:2}}>NO CAPTURES YET</div>
-                  <div style={{fontSize:8,color:"#1E2530",marginTop:6}}>Drop a screenshot above to get started</div>
                 </div>
               ):(
-                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                <div style={{display:"flex",flexDirection:"column",gap:10}}>
                   {captures.map(cap=>(
                     <div key={cap.id} style={{
                       background:"#0D1117",
                       border:`1px solid ${cap.confirmed?"#00FFB230":"#1E2530"}`,
-                      borderLeft:`3px solid ${cap.confirmed?"#00FFB2":cap.matchedTrade?"#FFD700":"#4A5568"}`,
-                      borderRadius:4,
-                      overflow:"hidden",
+                      borderLeft:`3px solid ${cap.confirmed?"#00FFB2":cap.pnl!==null?cap.pnl>=0?"#00FFB2":"#FF6B6B":"#FFD700"}`,
+                      borderRadius:4,overflow:"hidden",
                     }}>
-                      {/* Match banner */}
-                      <div style={{
-                        background:cap.matchedTrade?"#FFD70008":"#0D1117",
-                        padding:"8px 12px",
-                        display:"flex",justifyContent:"space-between",alignItems:"center",
-                        borderBottom:"1px solid #1E2530",
-                      }}>
-                        <div>
-                          {cap.matchedTrade?(
-                            <>
-                              <div style={{fontSize:7,color:"#FFD700",letterSpacing:2,marginBottom:2}}>
-                                AUTO-MATCHED
-                              </div>
-                              <div style={{fontSize:10,color:"#E2E8F0",fontWeight:600}}>
-                                {cap.matchedTrade.symbol||contractId} · {cap.matchedTrade.dir==="long"?"LONG":"SHORT"} · {cap.matchedTrade.grade||"—"}
-                              </div>
-                              <div style={{fontSize:8,color:"#4A5568"}}>
-                                {cap.matchedTrade.date} {cap.matchedTrade.time||""}
-                              </div>
-                            </>
-                          ):(
-                            <>
-                              <div style={{fontSize:7,color:"#4A5568",letterSpacing:2,marginBottom:2}}>NO MATCH FOUND</div>
-                              <div style={{fontSize:9,color:"#2A3545"}}>Log a trade first to enable auto-matching</div>
-                            </>
-                          )}
-                        </div>
-                        <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                          {cap.matchedTrade&&!cap.confirmed&&(
-                            <button onClick={()=>setCaptures(p=>p.map(c=>c.id===cap.id?{...c,confirmed:true}:c))} style={{
-                              background:"#00FFB218",border:"1px solid #00FFB230",borderRadius:3,
-                              padding:"4px 10px",fontSize:8,color:"#00FFB2",cursor:"pointer",
-                              fontFamily:"inherit",letterSpacing:1
-                            }}>✓ CONFIRM</button>
-                          )}
-                          {cap.confirmed&&(
-                            <div style={{fontSize:8,color:"#00FFB2",letterSpacing:1}}>✓ CONFIRMED</div>
-                          )}
-                          <button onClick={()=>setCaptures(p=>p.filter(c=>c.id!==cap.id))} style={{
-                            background:"none",border:"1px solid #1E2530",borderRadius:3,
-                            padding:"4px 8px",fontSize:8,color:"#4A5568",cursor:"pointer",
-                            fontFamily:"inherit"
-                          }}>✕</button>
-                        </div>
-                      </div>
 
                       {/* Screenshot */}
-                      <img
-                        src={cap.url}
-                        alt="trade capture"
-                        style={{width:"100%",display:"block",maxHeight:300,objectFit:"contain",background:"#080A0D"}}
-                      />
+                      <img src={cap.url} alt="capture"
+                        style={{width:"100%",display:"block",maxHeight:220,objectFit:"contain",background:"#080A0D"}}/>
 
-                      {/* Note */}
-                      <div style={{padding:"8px 12px"}}>
-                        <textarea
-                          value={cap.note}
-                          onChange={e=>setCaptures(p=>p.map(c=>c.id===cap.id?{...c,note:e.target.value}:c))}
-                          placeholder="Add a note about this trade..."
-                          style={{
-                            width:"100%",background:"#080A0D",border:"1px solid #1E2530",
-                            borderRadius:3,padding:"7px 9px",fontFamily:"inherit",
-                            fontSize:10,color:"#94A3B8",resize:"none",height:52,
-                            outline:"none",boxSizing:"border-box",
-                          }}
-                        />
-                      </div>
+                      {/* ⚡ QUICK CAPTURE — PRIMARY */}
+                      {!cap.showAdvanced&&(
+                        <div style={{padding:"10px 12px"}}>
+
+                          {/* Auto-match pill */}
+                          {cap.matchedTrade&&(
+                            <div style={{background:"#FFD70010",border:"1px solid #FFD70025",borderRadius:3,
+                              padding:"4px 8px",marginBottom:8,fontSize:8,color:"#FFD700",letterSpacing:1}}>
+                              AUTO-MATCHED → {cap.matchedTrade.symbol||cap.sym} · {cap.matchedTrade.dir==="long"?"LONG":"SHORT"} · {cap.matchedTrade.date}
+                            </div>
+                          )}
+
+                          {/* Symbol + Direction */}
+                          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:8}}>
+                            <select value={cap.sym} onChange={e=>upd(cap.id,{sym:e.target.value})} style={{
+                              background:"#080A0D",border:"1px solid #1E2530",borderRadius:3,
+                              padding:"7px 10px",fontSize:10,color:"#E2E8F0",fontFamily:"inherit",outline:"none"
+                            }}>
+                              {SYMBOLS.map(s=><option key={s} value={s}>{s}</option>)}
+                            </select>
+                            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:4}}>
+                              {["long","short"].map(d=>(
+                                <button key={d} onClick={()=>upd(cap.id,{dir:d})} style={{
+                                  background:cap.dir===d?(d==="long"?"#00FFB218":"#FF6B6B18"):"#080A0D",
+                                  border:`1px solid ${cap.dir===d?(d==="long"?"#00FFB240":"#FF6B6B40"):"#1E2530"}`,
+                                  borderRadius:3,padding:"7px",cursor:"pointer",
+                                  fontSize:9,color:cap.dir===d?(d==="long"?"#00FFB2":"#FF6B6B"):"#4A5568",
+                                  fontFamily:"inherit",letterSpacing:1,
+                                }}>{d.toUpperCase()}</button>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* P&L quick buttons */}
+                          <div style={{marginBottom:8}}>
+                            <div style={{fontSize:7,color:"#4A5568",letterSpacing:2,marginBottom:5}}>P&L</div>
+                            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr) repeat(3,1fr)",gap:4,marginBottom:5}}>
+                              {PNL_QUICK.map(v=>(
+                                <button key={v} onClick={()=>upd(cap.id,{pnl:v})} style={{
+                                  background:cap.pnl===v?"#00FFB218":"#080A0D",
+                                  border:`1px solid ${cap.pnl===v?"#00FFB240":"#1E2530"}`,
+                                  borderRadius:3,padding:"6px",cursor:"pointer",
+                                  fontSize:9,color:cap.pnl===v?"#00FFB2":"#4A5568",fontFamily:"inherit"
+                                }}>+${v}</button>
+                              ))}
+                              {PNL_QUICK.map(v=>(
+                                <button key={-v} onClick={()=>upd(cap.id,{pnl:-v})} style={{
+                                  background:cap.pnl===-v?"#FF6B6B18":"#080A0D",
+                                  border:`1px solid ${cap.pnl===-v?"#FF6B6B40":"#1E2530"}`,
+                                  borderRadius:3,padding:"6px",cursor:"pointer",
+                                  fontSize:9,color:cap.pnl===-v?"#FF6B6B":"#4A5568",fontFamily:"inherit"
+                                }}>-${v}</button>
+                              ))}
+                            </div>
+                            {/* Custom P&L */}
+                            <input type="number" placeholder="Custom P&L"
+                              onChange={e=>upd(cap.id,{pnl:parseFloat(e.target.value)||null})}
+                              style={{width:"100%",background:"#080A0D",border:"1px solid #1E2530",borderRadius:3,
+                                padding:"6px 10px",fontSize:10,color:"#E2E8F0",fontFamily:"inherit",
+                                outline:"none",boxSizing:"border-box"}}/>
+                          </div>
+
+                          {/* Setup chips */}
+                          <div style={{marginBottom:10}}>
+                            <div style={{fontSize:7,color:"#4A5568",letterSpacing:2,marginBottom:5}}>SETUP</div>
+                            <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                              {SETUPS.map(s=>(
+                                <button key={s} onClick={()=>upd(cap.id,{setup:cap.setup===s?null:s})} style={{
+                                  background:cap.setup===s?"#A78BFA18":"#080A0D",
+                                  border:`1px solid ${cap.setup===s?"#A78BFA40":"#1E2530"}`,
+                                  borderRadius:3,padding:"4px 10px",cursor:"pointer",
+                                  fontSize:8,color:cap.setup===s?"#A78BFA":"#4A5568",
+                                  fontFamily:"inherit",letterSpacing:1
+                                }}>{s}</button>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Actions */}
+                          <div style={{display:"flex",gap:6,justifyContent:"space-between",alignItems:"center"}}>
+                            <button onClick={()=>upd(cap.id,{showAdvanced:true})} style={{
+                              background:"none",border:"1px solid #1E2530",borderRadius:3,
+                              padding:"5px 10px",fontSize:8,color:"#4A5568",cursor:"pointer",fontFamily:"inherit"
+                            }}>ADVANCED</button>
+                            <div style={{display:"flex",gap:6}}>
+                              <button onClick={()=>setCaptures(p=>p.filter(c=>c.id!==cap.id))} style={{
+                                background:"none",border:"1px solid #1E2530",borderRadius:3,
+                                padding:"5px 10px",fontSize:8,color:"#4A5568",cursor:"pointer",fontFamily:"inherit"
+                              }}>✕ REMOVE</button>
+                              <button
+                                disabled={cap.pnl===null||!cap.setup}
+                                onClick={()=>upd(cap.id,{confirmed:true})}
+                                style={{
+                                  background:cap.pnl!==null&&cap.setup?"#00FFB2":"#1E2530",
+                                  border:"none",borderRadius:3,padding:"5px 14px",
+                                  fontSize:9,fontWeight:600,letterSpacing:1,
+                                  color:cap.pnl!==null&&cap.setup?"#06080B":"#4A5568",
+                                  cursor:cap.pnl!==null&&cap.setup?"pointer":"not-allowed",fontFamily:"inherit"
+                                }}>
+                                {cap.confirmed?"✓ SAVED":"SAVE"}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 🧠 ADVANCED MODE */}
+                      {cap.showAdvanced&&(
+                        <div style={{padding:"10px 12px"}}>
+                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                            <div style={{fontSize:8,color:"#A78BFA",letterSpacing:2}}>ADVANCED MODE</div>
+                            <button onClick={()=>upd(cap.id,{showAdvanced:false})} style={{
+                              background:"none",border:"1px solid #1E2530",borderRadius:3,
+                              padding:"3px 8px",fontSize:7,color:"#4A5568",cursor:"pointer",fontFamily:"inherit"
+                            }}>← BACK</button>
+                          </div>
+                          <textarea value={cap.note}
+                            onChange={e=>upd(cap.id,{note:e.target.value})}
+                            placeholder="Entry price, exit, confluences, what you saw, what you missed..."
+                            style={{width:"100%",background:"#080A0D",border:"1px solid #1E2530",borderRadius:3,
+                              padding:"8px 10px",fontFamily:"inherit",fontSize:10,color:"#94A3B8",
+                              resize:"none",height:100,outline:"none",boxSizing:"border-box",marginBottom:8}}/>
+                          <button onClick={()=>upd(cap.id,{showAdvanced:false,confirmed:true})} style={{
+                            width:"100%",background:"#00FFB2",border:"none",borderRadius:3,padding:"8px",
+                            fontSize:9,fontWeight:600,letterSpacing:1,color:"#06080B",cursor:"pointer",fontFamily:"inherit"
+                          }}>SAVE NOTES</button>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -3841,3 +4005,4 @@ export default function App() {
 
   return <TradingPlan user={user} onLogout={handleLogout} />;
 }
+ 
