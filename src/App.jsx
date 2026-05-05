@@ -3412,6 +3412,82 @@ function TradingPlan({ user, onLogout }) {
                               </button>
                             </div>
                           </div>
+
+                          {/* ⚡ SETUP PERFORMANCE — shown inline after save */}
+                          {cap.confirmed&&cap.setup&&(()=>{
+                            const key     = cap.setup.toUpperCase();
+                            const tagged  = trades.filter(t=>(t.setup_type||t.setup||"").toUpperCase()===key);
+                            const allCaps = captures.filter(c=>c.confirmed&&(c.setup||"").toUpperCase()===key);
+                            const total   = tagged.length + allCaps.length;
+                            if(total===0) return null;
+                            const wins    = tagged.filter(t=>parseFloat(t.pnl)>0).length
+                                          + allCaps.filter(c=>parseFloat(c.pnl)>0).length;
+                            const wr      = Math.round((wins/total)*100);
+                            const pnl     = tagged.reduce((s,t)=>s+parseFloat(t.pnl||0),0)
+                                          + allCaps.reduce((s,c)=>s+parseFloat(c.pnl||0),0);
+                            const col     = pnl>0?"#00FFB2":"#FF6B6B";
+
+                            // Session breakdown
+                            const sessMap={};
+                            [...tagged,...allCaps].forEach(t=>{
+                              const s=t.session||getSession(t.date||new Date().toISOString().slice(0,10),t.time||"14:00");
+                              sessMap[s]=(sessMap[s]||0)+parseFloat(t.pnl||0);
+                            });
+                            const sessArr=Object.entries(sessMap).sort((a,b)=>b[1]-a[1]);
+
+                            return(
+                              <div style={{
+                                margin:"10px 0 0",
+                                background:`${col}06`,
+                                borderTop:`1px solid ${col}20`,
+                                padding:"12px 12px 10px",
+                                animation:"fadeSlide .25s ease",
+                              }}>
+                                <div style={{fontSize:7,letterSpacing:3,color:col,marginBottom:8}}>YOUR {key} STATS</div>
+
+                                {/* Three numbers — clean and big */}
+                                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:10}}>
+                                  {[
+                                    ["TAKEN",     total,              "#94A3B8"],
+                                    ["WIN RATE",  `${wr}%`,           wr>=50?"#00FFB2":wr>=40?"#FFD700":"#FF6B6B"],
+                                    ["NET P&L",   `${pnl>=0?"+":""}${fmtU(pnl)}`, col],
+                                  ].map(([l,v,c])=>(
+                                    <div key={l} style={{textAlign:"center"}}>
+                                      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:c,lineHeight:1}}>{v}</div>
+                                      <div style={{fontSize:7,color:"#2A3545",letterSpacing:1,marginTop:2}}>{l}</div>
+                                    </div>
+                                  ))}
+                                </div>
+
+                                {/* Session insight */}
+                                {sessArr.length>0&&(
+                                  <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                                    {sessArr[0]&&sessArr[0][1]>0&&(
+                                      <div style={{fontSize:9,color:"#00FFB2"}}>
+                                        → Works best in <strong>{sessArr[0][0]}</strong>
+                                      </div>
+                                    )}
+                                    {sessArr.length>1&&sessArr[sessArr.length-1][1]<0&&(
+                                      <div style={{fontSize:9,color:"#FF6B6B"}}>
+                                        → Fails in <strong>{sessArr[sessArr.length-1][0]}</strong>
+                                      </div>
+                                    )}
+                                    {total>=3&&wr<40&&(
+                                      <div style={{fontSize:9,color:"#FF6B6B",marginTop:2}}>
+                                        ⚠ Underperforming. Reduce size or pause this setup.
+                                      </div>
+                                    )}
+                                    {total>=3&&wr>=65&&pnl>0&&(
+                                      <div style={{fontSize:9,color:"#00FFB2",marginTop:2}}>
+                                        ✓ Your strongest setup. Lean in.
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
+
                         </div>
                       )}
 
