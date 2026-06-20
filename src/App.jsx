@@ -990,8 +990,6 @@ function convertRange(rangeStr, tzOffset) {
 }
 
 function TradingViewChart({ contractId, cc }) {
-  const containerRef = useRef(null);
-
   // Map internal contract ids to TradingView symbol strings (front-month continuous)
   const TV_SYMBOLS = {
     ES:"CME_MINI:ES1!",  NQ:"CME_MINI:NQ1!",  RTY:"CME_MINI:RTY1!", YM:"CBOT_MINI:YM1!",
@@ -1001,59 +999,32 @@ function TradingViewChart({ contractId, cc }) {
     "6E":"CME:6E1!",     M6E:"CME:M6E1!",     "6B":"CME:6B1!",       "6J":"CME:6J1!",
     ZN:"CBOT:ZN1!",      ZB:"CBOT:ZB1!",
   };
-  const [tvSym, setTvSym] = useState(TV_SYMBOLS[contractId] || "CME_MINI:ES1!");
+  const tvSym = TV_SYMBOLS[contractId] || "CME_MINI:ES1!";
 
-  useEffect(()=>{
-    setTvSym(TV_SYMBOLS[contractId] || "CME_MINI:ES1!");
-  // eslint-disable-next-line
-  },[contractId]);
-
-  useEffect(()=>{
-    const el = containerRef.current;
-    if(!el) return;
-    el.innerHTML = ""; // clear any previous widget
-
-    // Small delay ensures the container has real dimensions before the
-    // TradingView script reads them (prevents collapse + default-symbol fallback)
-    const timer = setTimeout(()=>{
-      if(!containerRef.current) return;
-      const host = containerRef.current;
-      host.innerHTML = "";
-
-      const widgetDiv = document.createElement("div");
-      widgetDiv.className = "tradingview-widget-container__widget";
-      widgetDiv.style.height = "calc(100% - 32px)";
-      widgetDiv.style.width  = "100%";
-      host.appendChild(widgetDiv);
-
-      const script = document.createElement("script");
-      script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
-      script.type = "text/javascript";
-      script.async = true;
-      script.innerHTML = JSON.stringify({
-        autosize: true,
-        symbol: tvSym,
-        interval: "15",
-        timezone: "Etc/UTC",
-        theme: "dark",
-        style: "1",
-        locale: "en",
-        enable_publishing: false,
-        backgroundColor: "#0D1117",
-        gridColor: "rgba(30, 37, 48, 0.6)",
-        hide_side_toolbar: false,
-        allow_symbol_change: true,
-        save_image: false,
-        details: false,
-        hotlist: false,
-        calendar: false,
-        support_host: "https://www.tradingview.com",
-      });
-      host.appendChild(script);
-    }, 120);
-
-    return ()=>{ clearTimeout(timer); if(el) el.innerHTML = ""; };
-  },[tvSym]);
+  // Build the iframe src with the symbol baked directly into the URL.
+  // This is the most reliable embed method — the symbol cannot fall back
+  // to a default because it IS the URL parameter.
+  const cfg = {
+    symbol: tvSym,
+    interval: "15",
+    timezone: "Etc/UTC",
+    theme: "dark",
+    style: "1",
+    locale: "en",
+    backgroundColor: "#0D1117",
+    gridColor: "rgba(30, 37, 48, 0.6)",
+    hide_side_toolbar: false,
+    allow_symbol_change: true,
+    save_image: false,
+    studies: [],
+    withdateranges: true,
+  };
+  const iframeSrc =
+    "https://www.tradingview.com/widgetembed/?frameElementId=tradingview_chart" +
+    "&symbol=" + encodeURIComponent(tvSym) +
+    "&interval=15&hidesidetoolbar=0&symboledit=1&saveimage=0" +
+    "&theme=dark&style=1&timezone=Etc%2FUTC&withdateranges=1" +
+    "&studies=%5B%5D&hideideas=1&backgroundColor=%230D1117";
 
   return (
     <div>
@@ -1064,16 +1035,22 @@ function TradingViewChart({ contractId, cc }) {
           <div style={{fontSize:8,color:"#4A5568",letterSpacing:1,marginTop:2}}>POWERED BY TRADINGVIEW · FRONT-MONTH CONTINUOUS</div>
         </div>
         <div style={{fontSize:8,color:cc,letterSpacing:1,border:`1px solid ${cc}30`,borderRadius:3,padding:"4px 9px"}}>
-          {contractId}
+          {contractId} · {tvSym}
         </div>
       </div>
 
-      {/* Chart */}
-      <div
-        ref={containerRef}
-        className="tradingview-widget-container"
-        style={{height:"640px",minHeight:"640px",width:"100%",background:"#0D1117",border:"1px solid #1E2530",borderRadius:6,overflow:"hidden"}}
-      />
+      {/* Chart — iframe embed keyed by symbol so it re-mounts on contract change */}
+      <div style={{height:"640px",width:"100%",background:"#0D1117",border:"1px solid #1E2530",borderRadius:6,overflow:"hidden"}}>
+        <iframe
+          key={tvSym}
+          title="TradingView Chart"
+          src={iframeSrc}
+          style={{width:"100%",height:"100%",border:"none",display:"block"}}
+          allchart="true"
+          allowtransparency="true"
+          scrolling="no"
+        />
+      </div>
 
       {/* Footnote */}
       <div style={{fontSize:8,color:"#2A3545",letterSpacing:1,marginTop:8,lineHeight:1.6}}>
@@ -1084,7 +1061,131 @@ function TradingViewChart({ contractId, cc }) {
   );
 }
 
+function MarketLevels({ contractId, cc, compact=false }) {
+  const [data, setData]       = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState(null);
+
+  const load = async () => {
+    setLoading(true); setError(null);
+    try {
+      const res = await fetch(`/api/market-levels?symbol=${encodeURIComponent(contractId)}`);
+      if(!res.ok){
+        const j = await res.json().catch(()=>({}));
+        throw new Error(j.error || `Error ${res.status}`);
+      }
+      const j = await res.json();
+      setData(j);
+    } catch(e) {
+      setError(String(e.message||e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(()=>{ load(); /* eslint-disable-next-line */ },[contractId]);
+
+  // Derived metrics
+  const m = (()=>{
+    if(!data || !data.prev_high) return null;
+    const cur   = data.cur_high && data.cur_low ? (data.cur_high + data.cur_low)/2 : data.prev_close;
+    const range = (data.cur_high && data.cur_low) ? (data.cur_high - data.cur_low) : 0;
+    const adr   = data.adr_20 || data.daily_range || 0;
+    const adrPct = adr>0 ? Math.min(100, Math.round((range/adr)*100)) : 0;
+    const distPDH = data.prev_high - cur;
+    const distPDL = cur - data.prev_low;
+    return { cur, range, adr, adrPct, distPDH, distPDL };
+  })();
+
+  const fmtPx = (v) => v==null ? "—" : Number(v).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+
+  return (
+    <div style={{marginBottom:12}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+        <div style={{fontSize:8,letterSpacing:3,color:"#4A5568"}}>
+          MARKET LEVELS · {contractId} {data?.is_delayed && <span style={{color:"#FFD700"}}>· DELAYED</span>}
+        </div>
+        <button onClick={load} disabled={loading} style={{
+          background:"none",border:"1px solid #1E2530",borderRadius:3,
+          padding:"3px 9px",fontSize:7,letterSpacing:1,
+          color:loading?"#2A3545":"#4A5568",cursor:loading?"default":"pointer",fontFamily:"inherit"
+        }}>{loading?"LOADING…":"↻ REFRESH"}</button>
+      </div>
+
+      {error && (
+        <div style={{background:"#FF6B6B08",border:"1px solid #FF6B6B20",borderRadius:4,padding:"10px 12px",fontSize:8,color:"#FF6B6B",lineHeight:1.6}}>
+          {error.includes("not configured")
+            ? "Market data not yet connected. Add the Databento key to enable live levels."
+            : `Couldn't load levels: ${error}`}
+        </div>
+      )}
+
+      {!error && !data && loading && (
+        <div style={{background:"#0D1117",border:"1px solid #1E2530",borderRadius:4,padding:"14px",textAlign:"center",fontSize:8,color:"#2A3545",letterSpacing:2}}>
+          FETCHING LEVELS…
+        </div>
+      )}
+
+      {m && (
+        <>
+          {/* Previous-day reference levels */}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6,marginBottom:8}}>
+            {[
+              ["PREV HIGH",  data.prev_high,  "#00FFB2"],
+              ["PREV LOW",   data.prev_low,   "#FF6B6B"],
+              ["PREV CLOSE", data.prev_close, "#94A3B8"],
+              ["TODAY OPEN", data.today_open, "#38BDF8"],
+            ].map(([l,v,c])=>(
+              <div key={l} style={{background:"#0D1117",border:"1px solid #1E2530",borderRadius:4,padding:"8px 9px"}}>
+                <div style={{fontSize:6,letterSpacing:1,color:"#2A3545",marginBottom:3}}>{l}</div>
+                <div style={{fontSize:12,color:c,fontWeight:600}}>{fmtPx(v)}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Today's developing range */}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:6,marginBottom:8}}>
+            {[
+              ["TODAY HIGH", data.cur_high, "#00FFB2"],
+              ["TODAY LOW",  data.cur_low,  "#FF6B6B"],
+            ].map(([l,v,c])=>(
+              <div key={l} style={{background:"#0D1117",border:"1px solid #1E2530",borderRadius:4,padding:"8px 9px"}}>
+                <div style={{fontSize:6,letterSpacing:1,color:"#2A3545",marginBottom:3}}>{l}</div>
+                <div style={{fontSize:12,color:c,fontWeight:600}}>{fmtPx(v)}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Distances + ADR consumed */}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6}}>
+            <div style={{background:"#0D1117",border:"1px solid #1E2530",borderRadius:4,padding:"8px 9px"}}>
+              <div style={{fontSize:6,letterSpacing:1,color:"#2A3545",marginBottom:3}}>DIST TO PDH</div>
+              <div style={{fontSize:12,color:"#00FFB2",fontWeight:600}}>{fmtPx(Math.abs(m.distPDH))}</div>
+            </div>
+            <div style={{background:"#0D1117",border:"1px solid #1E2530",borderRadius:4,padding:"8px 9px"}}>
+              <div style={{fontSize:6,letterSpacing:1,color:"#2A3545",marginBottom:3}}>DIST TO PDL</div>
+              <div style={{fontSize:12,color:"#FF6B6B",fontWeight:600}}>{fmtPx(Math.abs(m.distPDL))}</div>
+            </div>
+            <div style={{background:"#0D1117",border:`1px solid ${m.adrPct>80?"#FF6B6B40":"#1E2530"}`,borderRadius:4,padding:"8px 9px"}}>
+              <div style={{fontSize:6,letterSpacing:1,color:"#2A3545",marginBottom:3}}>ADR CONSUMED</div>
+              <div style={{fontSize:12,color:m.adrPct>80?"#FF6B6B":m.adrPct>60?"#FFD700":"#00FFB2",fontWeight:600}}>{m.adrPct}%</div>
+            </div>
+          </div>
+
+          {/* Insight line */}
+          {m.adrPct>80 && (
+            <div style={{marginTop:8,background:"#FF6B6B08",border:"1px solid #FF6B6B20",borderRadius:4,padding:"7px 10px",fontSize:8,color:"#FF6B6B",lineHeight:1.6}}>
+              ⚠ {m.adrPct}% of average daily range already consumed — limited room left, be cautious initiating new positions.
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function TradingPlan({ user, onLogout }) {
+
   const [tab, setTab] = useState("pre");
   const [mode, setMode] = useState("cockpit"); // cockpit | capture
   const switchMode = (m) => {
@@ -1782,6 +1883,9 @@ function TradingPlan({ user, onLogout }) {
 
           return (
             <div>
+
+              {/* ══ MARKET LEVELS (Phase 3) ══════════════════════════ */}
+              <MarketLevels contractId={contractId} cc={cc}/>
 
               {/* ══ STICKY READ SUMMARY ══════════════════════════════ */}
               {hasRead&&(
@@ -3618,7 +3722,10 @@ function TradingPlan({ user, onLogout }) {
         })()}
 
         {tab==="chart"&&(
-          <TradingViewChart contractId={contractId} cc={cc}/>
+          <>
+            <MarketLevels contractId={contractId} cc={cc}/>
+            <TradingViewChart contractId={contractId} cc={cc}/>
+          </>
         )}
 
         {tab==="news"&&(<>
