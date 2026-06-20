@@ -2148,8 +2148,8 @@ function TradingPlan({ user, onLogout }) {
           </div>
 
           {/* Session Price Entry — from NinjaTrader */}
-          {/* Live feed toggle — temporarily hidden, re-enable when rate limits relax */}
-          {false&&(
+          {/* Live feed toggle — re-enabled with new API key */}
+          {true&&(
             <div style={{
               display:"flex",alignItems:"center",justifyContent:"space-between",
               background: liveFeed?"#00FFB210":"#0D1117",
@@ -4364,3 +4364,4 @@ export default function App() {
 
   return <TradingPlan user={user} onLogout={handleLogout} />;
 }
+ 
