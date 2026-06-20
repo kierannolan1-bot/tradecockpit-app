@@ -989,6 +989,91 @@ function convertRange(rangeStr, tzOffset) {
   return rangeStr.split(" – ").map(t => convertGMT(t.split(" ")[0], tzOffset)).join(" – ");
 }
 
+function TradingViewChart({ contractId, cc }) {
+  const containerRef = useRef(null);
+
+  // Map internal contract ids to TradingView symbol strings (front-month continuous)
+  const TV_SYMBOLS = {
+    ES:"CME_MINI:ES1!",  NQ:"CME_MINI:NQ1!",  RTY:"CME_MINI:RTY1!", YM:"CBOT_MINI:YM1!",
+    MES:"CME_MINI:MES1!",MNQ:"CME_MINI:MNQ1!",M2K:"CME_MINI:M2K1!",  MYM:"CBOT_MINI:MYM1!",
+    GC:"COMEX:GC1!",     MGC:"COMEX:MGC1!",   SI:"COMEX:SI1!",       SIL:"COMEX:SIL1!",
+    CL:"NYMEX:CL1!",     MCL:"NYMEX:MCL1!",   NG:"NYMEX:NG1!",
+    "6E":"CME:6E1!",     M6E:"CME:M6E1!",     "6B":"CME:6B1!",       "6J":"CME:6J1!",
+    ZN:"CBOT:ZN1!",      ZB:"CBOT:ZB1!",
+  };
+  const [tvSym, setTvSym] = useState(TV_SYMBOLS[contractId] || "CME_MINI:ES1!");
+
+  useEffect(()=>{
+    setTvSym(TV_SYMBOLS[contractId] || "CME_MINI:ES1!");
+  // eslint-disable-next-line
+  },[contractId]);
+
+  useEffect(()=>{
+    const el = containerRef.current;
+    if(!el) return;
+    el.innerHTML = ""; // clear any previous widget
+
+    const widgetDiv = document.createElement("div");
+    widgetDiv.className = "tradingview-widget-container__widget";
+    widgetDiv.style.height = "100%";
+    widgetDiv.style.width  = "100%";
+    el.appendChild(widgetDiv);
+
+    const script = document.createElement("script");
+    script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
+    script.type = "text/javascript";
+    script.async = true;
+    script.innerHTML = JSON.stringify({
+      autosize: true,
+      symbol: tvSym,
+      interval: "15",
+      timezone: "Etc/UTC",
+      theme: "dark",
+      style: "1",
+      locale: "en",
+      backgroundColor: "#0D1117",
+      gridColor: "rgba(30, 37, 48, 0.6)",
+      hide_side_toolbar: false,
+      allow_symbol_change: true,
+      details: true,
+      hotlist: false,
+      calendar: false,
+      support_host: "https://www.tradingview.com",
+    });
+    el.appendChild(script);
+
+    return ()=>{ if(el) el.innerHTML = ""; };
+  },[tvSym]);
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <div>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:"#E2E8F0",letterSpacing:1}}>LIVE CHART</div>
+          <div style={{fontSize:8,color:"#4A5568",letterSpacing:1,marginTop:2}}>POWERED BY TRADINGVIEW · FRONT-MONTH CONTINUOUS</div>
+        </div>
+        <div style={{fontSize:8,color:cc,letterSpacing:1,border:`1px solid ${cc}30`,borderRadius:3,padding:"4px 9px"}}>
+          {contractId}
+        </div>
+      </div>
+
+      {/* Chart */}
+      <div
+        ref={containerRef}
+        className="tradingview-widget-container"
+        style={{height:"560px",width:"100%",background:"#0D1117",border:"1px solid #1E2530",borderRadius:6,overflow:"hidden"}}
+      />
+
+      {/* Footnote */}
+      <div style={{fontSize:8,color:"#2A3545",letterSpacing:1,marginTop:8,lineHeight:1.6}}>
+        Chart data is provided by TradingView and may be delayed. Always verify live prices with your broker before trading.
+        Use the symbol search in the chart toolbar to switch instruments.
+      </div>
+    </div>
+  );
+}
+
 function TradingPlan({ user, onLogout }) {
   const [tab, setTab] = useState("pre");
   const [mode, setMode] = useState("cockpit"); // cockpit | capture
@@ -1424,6 +1509,7 @@ function TradingPlan({ user, onLogout }) {
 
   const COCKPIT_TABS=[
     {id:"pre",    icon:"◈", label:"PRE / LIVE"},
+    {id:"chart",  icon:"▤", label:"CHART"},
     {id:"calc",   icon:"▣", label:"RISK CALC"},
     {id:"prop",   icon:"◍", label:"PROP FIRM"},
     {id:"news",   icon:"◉", label:"NEWS"},
@@ -3520,6 +3606,10 @@ function TradingPlan({ user, onLogout }) {
             </div>
           );
         })()}
+
+        {tab==="chart"&&(
+          <TradingViewChart contractId={contractId} cc={cc}/>
+        )}
 
         {tab==="news"&&(<>
           <NewsFeed contract={contract} cc={cc} finnhubKey={settings?.finnhubKey||""}/>
