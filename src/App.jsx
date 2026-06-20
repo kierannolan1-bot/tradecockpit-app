@@ -1013,36 +1013,46 @@ function TradingViewChart({ contractId, cc }) {
     if(!el) return;
     el.innerHTML = ""; // clear any previous widget
 
-    const widgetDiv = document.createElement("div");
-    widgetDiv.className = "tradingview-widget-container__widget";
-    widgetDiv.style.height = "100%";
-    widgetDiv.style.width  = "100%";
-    el.appendChild(widgetDiv);
+    // Small delay ensures the container has real dimensions before the
+    // TradingView script reads them (prevents collapse + default-symbol fallback)
+    const timer = setTimeout(()=>{
+      if(!containerRef.current) return;
+      const host = containerRef.current;
+      host.innerHTML = "";
 
-    const script = document.createElement("script");
-    script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
-    script.type = "text/javascript";
-    script.async = true;
-    script.innerHTML = JSON.stringify({
-      autosize: true,
-      symbol: tvSym,
-      interval: "15",
-      timezone: "Etc/UTC",
-      theme: "dark",
-      style: "1",
-      locale: "en",
-      backgroundColor: "#0D1117",
-      gridColor: "rgba(30, 37, 48, 0.6)",
-      hide_side_toolbar: false,
-      allow_symbol_change: true,
-      details: true,
-      hotlist: false,
-      calendar: false,
-      support_host: "https://www.tradingview.com",
-    });
-    el.appendChild(script);
+      const widgetDiv = document.createElement("div");
+      widgetDiv.className = "tradingview-widget-container__widget";
+      widgetDiv.style.height = "calc(100% - 32px)";
+      widgetDiv.style.width  = "100%";
+      host.appendChild(widgetDiv);
 
-    return ()=>{ if(el) el.innerHTML = ""; };
+      const script = document.createElement("script");
+      script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
+      script.type = "text/javascript";
+      script.async = true;
+      script.innerHTML = JSON.stringify({
+        autosize: true,
+        symbol: tvSym,
+        interval: "15",
+        timezone: "Etc/UTC",
+        theme: "dark",
+        style: "1",
+        locale: "en",
+        enable_publishing: false,
+        backgroundColor: "#0D1117",
+        gridColor: "rgba(30, 37, 48, 0.6)",
+        hide_side_toolbar: false,
+        allow_symbol_change: true,
+        save_image: false,
+        details: false,
+        hotlist: false,
+        calendar: false,
+        support_host: "https://www.tradingview.com",
+      });
+      host.appendChild(script);
+    }, 120);
+
+    return ()=>{ clearTimeout(timer); if(el) el.innerHTML = ""; };
   },[tvSym]);
 
   return (
@@ -1062,7 +1072,7 @@ function TradingViewChart({ contractId, cc }) {
       <div
         ref={containerRef}
         className="tradingview-widget-container"
-        style={{height:"560px",width:"100%",background:"#0D1117",border:"1px solid #1E2530",borderRadius:6,overflow:"hidden"}}
+        style={{height:"640px",minHeight:"640px",width:"100%",background:"#0D1117",border:"1px solid #1E2530",borderRadius:6,overflow:"hidden"}}
       />
 
       {/* Footnote */}
