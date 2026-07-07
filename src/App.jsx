@@ -300,6 +300,66 @@ const fmtU = n => n==null||isNaN(n)?"—":"$"+fmt(n);
 const fmtP = (n,d=1) => n==null||isNaN(n)?"—":fmt(n,d)+"%";
 const dec  = c => c.tickSize<0.001?6:c.tickSize<0.01?4:2;
 
+// ── Co-Pilot analytics engine (deterministic, no external calls) ──────
+// Computes real performance stats from the trader's own logged trades.
+// The AI narrates these numbers — it never invents them.
+function analyzeTrades(trades){
+  const valid = (trades||[]).filter(t => t && (t.pnl!==undefined && t.pnl!==null) && (t.setup_type||t.setup));
+  const n = valid.length;
+  if(n===0) return { count:0, ready:false };
+
+  const pnl = valid.reduce((s,t)=>s+(parseFloat(t.pnl)||0),0);
+  const wins = valid.filter(t=>parseFloat(t.pnl)>0);
+  const losses = valid.filter(t=>parseFloat(t.pnl)<=0);
+  const winRate = n>0 ? (wins.length/n*100) : 0;
+  const avgWin = wins.length ? wins.reduce((s,t)=>s+parseFloat(t.pnl),0)/wins.length : 0;
+  const avgLoss = losses.length ? losses.reduce((s,t)=>s+parseFloat(t.pnl),0)/losses.length : 0;
+  const expectancy = n>0 ? pnl/n : 0;
+
+  // Group helper
+  const groupBy = (keyFn) => {
+    const g = {};
+    valid.forEach(t=>{
+      const k = keyFn(t) || "UNTAGGED";
+      if(!g[k]) g[k]={key:k,count:0,wins:0,pnl:0};
+      g[k].count++;
+      const p = parseFloat(t.pnl)||0;
+      g[k].pnl += p;
+      if(p>0) g[k].wins++;
+    });
+    return Object.values(g).map(x=>({
+      ...x,
+      winRate: x.count>0 ? (x.wins/x.count*100) : 0,
+      expectancy: x.count>0 ? x.pnl/x.count : 0,
+    }));
+  };
+
+  const bySetup   = groupBy(t => (t.setup_type||t.setup||"").toUpperCase()).sort((a,b)=>b.pnl-a.pnl);
+  const bySession = groupBy(t => (t.session||getSession(t.date,t.time)||"").toUpperCase()).sort((a,b)=>b.pnl-a.pnl);
+  const bySymbol  = groupBy(t => (t.symbol||t.sym||"").toUpperCase()).sort((a,b)=>b.pnl-a.pnl);
+  const byDir     = groupBy(t => (t.dir||"").toUpperCase()).sort((a,b)=>b.pnl-a.pnl);
+
+  // Grade distribution (discipline signal)
+  const grades = { A:0, B:0, C:0 };
+  valid.forEach(t=>{ const g=(t.grade||"B").toUpperCase(); if(grades[g]!==undefined) grades[g]++; });
+
+  const bestSetup  = bySetup[0]  || null;
+  const worstSetup = bySetup[bySetup.length-1] || null;
+  const bestSession = bySession[0] || null;
+
+  return {
+    count:n, ready:true,
+    pnl, winRate, avgWin, avgLoss, expectancy,
+    wins:wins.length, losses:losses.length,
+    bySetup, bySession, bySymbol, byDir, grades,
+    bestSetup, worstSetup, bestSession,
+  };
+}
+
+// Confidence guardrail — how much to trust a per-group stat by sample size
+const sampleConfidence = (n) => n>=20 ? "high" : n>=10 ? "medium" : n>=5 ? "low" : "insufficient";
+
+
 // ─── Checklist items ──────────────────────────────────────────
 const CHECKS = [
   { id:"htf",   label:"Marked HTF levels (Daily / 4H bias confirmed)" },
@@ -1184,6 +1244,315 @@ function MarketLevels({ contractId, cc, compact=false }) {
   );
 }
 
+function CoPilot({ trades, userName }) {
+  const [answer, setAnswer]   = useState(null);   // { q, deterministic, narration, loading }
+  const [aiOn, setAiOn]       = useState(true);   // narration toggle
+  const [freeText, setFreeText] = useState("");   // free-text question box
+  const greeting = (()=>{
+    const h = new Date().getHours();
+    const g = h<12 ? "Good morning" : h<18 ? "Good afternoon" : "Good evening";
+    return userName ? `${g}, ${userName.charAt(0).toUpperCase()+userName.slice(1)}.` : `${g}.`;
+  })();
+
+  const a = analyzeTrades(trades);
+
+  // Build a compact, factual data summary to hand the AI (grounding).
+  const buildFactSheet = () => {
+    if(!a.ready) return "No trades logged yet.";
+    const lines = [];
+    lines.push(`Total trades: ${a.count}`);
+    lines.push(`Overall win rate: ${a.winRate.toFixed(0)}%`);
+    lines.push(`Net P&L: ${a.pnl>=0?"+":""}$${a.pnl.toFixed(0)}`);
+    lines.push(`Expectancy per trade: ${a.expectancy>=0?"+":""}$${a.expectancy.toFixed(0)}`);
+    lines.push(`Avg win: $${a.avgWin.toFixed(0)} | Avg loss: $${a.avgLoss.toFixed(0)}`);
+    lines.push(`Grade distribution: A=${a.grades.A} B=${a.grades.B} C=${a.grades.C}`);
+    lines.push("");
+    lines.push("BY SETUP (sorted by net P&L):");
+    a.bySetup.forEach(s=>lines.push(`  ${s.key}: ${s.count} trades, ${s.winRate.toFixed(0)}% WR, net ${s.pnl>=0?"+":""}$${s.pnl.toFixed(0)}, exp ${s.expectancy>=0?"+":""}$${s.expectancy.toFixed(0)} [${sampleConfidence(s.count)} confidence]`));
+    lines.push("");
+    lines.push("BY SESSION:");
+    a.bySession.forEach(s=>lines.push(`  ${s.key}: ${s.count} trades, ${s.winRate.toFixed(0)}% WR, net ${s.pnl>=0?"+":""}$${s.pnl.toFixed(0)}`));
+    lines.push("");
+    lines.push("BY INSTRUMENT:");
+    a.bySymbol.forEach(s=>lines.push(`  ${s.key}: ${s.count} trades, ${s.winRate.toFixed(0)}% WR, net ${s.pnl>=0?"+":""}$${s.pnl.toFixed(0)}`));
+    return lines.join("\n");
+  };
+
+  // Deterministic answers — computed, always accurate
+  const QUESTIONS = [
+    {
+      id:"best_setup", label:"What's my best setup?",
+      answer: () => {
+        if(!a.bestSetup) return "No setups logged yet.";
+        const s = a.bestSetup;
+        const conf = sampleConfidence(s.count);
+        return conf==="insufficient"
+          ? `Your highest-P&L setup so far is ${s.key} (${s.count} trades, ${s.winRate.toFixed(0)}% win rate, net ${s.pnl>=0?"+":""}$${s.pnl.toFixed(0)}) — but that's too few trades to be reliable. Log a few more before trusting it.`
+          : `Your best setup is ${s.key}: ${s.count} trades, ${s.winRate.toFixed(0)}% win rate, net ${s.pnl>=0?"+":""}$${s.pnl.toFixed(0)}, expectancy ${s.expectancy>=0?"+":""}$${s.expectancy.toFixed(0)}/trade (${conf} confidence).`;
+      }
+    },
+    {
+      id:"biggest_mistake", label:"What's my biggest mistake?",
+      answer: () => {
+        if(!a.worstSetup) return "No setups logged yet.";
+        const s = a.worstSetup;
+        if(s.pnl>=0) return "Nothing standing out as a clear leak yet — none of your setups are net negative. Keep logging.";
+        return `Your biggest leak is ${s.key}: ${s.count} trades, ${s.winRate.toFixed(0)}% win rate, net $${s.pnl.toFixed(0)}. That's costing you the most.`;
+      }
+    },
+    {
+      id:"stop_trading", label:"What should I stop trading?",
+      answer: () => {
+        const negatives = a.bySetup.filter(s=>s.pnl<0 && s.count>=3);
+        if(!negatives.length) return "Nothing to cut yet — no setup with enough trades is clearly negative.";
+        return "Consider pausing or reducing size on: " + negatives.map(s=>`${s.key} (${s.count} trades, net $${s.pnl.toFixed(0)}, ${sampleConfidence(s.count)} confidence)`).join("; ") + ".";
+      }
+    },
+    {
+      id:"best_session", label:"When do I trade best?",
+      answer: () => {
+        if(!a.bestSession) return "No session data yet.";
+        const s = a.bestSession;
+        return `Your strongest session is ${s.key}: ${s.count} trades, ${s.winRate.toFixed(0)}% win rate, net ${s.pnl>=0?"+":""}$${s.pnl.toFixed(0)}.`;
+      }
+    },
+    {
+      id:"discipline", label:"How's my discipline?",
+      answer: () => {
+        const total = a.grades.A+a.grades.B+a.grades.C;
+        if(!total) return "No graded trades yet.";
+        const aPct = Math.round(a.grades.A/total*100);
+        const cPct = Math.round(a.grades.C/total*100);
+        return `Grade breakdown: ${a.grades.A} A-grade (${aPct}%), ${a.grades.B} B-grade, ${a.grades.C} C-grade (${cPct}%). ${cPct>30?"A high share of C-grade trades suggests impulsive entries — tighten your criteria.":aPct>50?"Strong discipline — over half your trades are A-grade.":"Room to push more trades into A-grade territory."}`;
+      }
+    },
+  ];
+
+  const askFreeText = async () => {
+    const q = freeText.trim();
+    if(!q) return;
+    setAnswer({ q, deterministic:null, narration:null, loading:true });
+    try {
+      const apiKey = import.meta.env.VITE_ANTHROPIC_KEY;
+      if(!apiKey){
+        setAnswer({ q, deterministic:"AI is off or unavailable. Free-text questions need the AI layer — use the preset questions above for computed answers.", narration:null, loading:false });
+        return;
+      }
+      const factSheet = buildFactSheet();
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method:"POST",
+        headers:{
+          "Content-Type":"application/json",
+          "x-api-key":apiKey,
+          "anthropic-version":"2023-06-01",
+          "anthropic-dangerous-direct-browser-access":"true",
+        },
+        body: JSON.stringify({
+          model:"claude-haiku-4-5-20251001",
+          max_tokens:260,
+          messages:[{
+            role:"user",
+            content:`You are a trading co-pilot for a futures trader. You help them understand THEIR OWN trading using the FACT SHEET below.\n\nCRITICAL RULES:\n- Only use numbers from the FACT SHEET. Never invent statistics.\n- If asked to predict the market, give signals, or say whether a market will go up or down, politely refuse: you analyse the trader, not the market. Redirect to what you can answer about their performance.\n- If the data is too thin to answer confidently, say so honestly.\n- Be concise (2-4 sentences), direct, like a sharp trading coach.\n\nFACT SHEET:\n${factSheet}\n\nQUESTION: ${q}`
+          }]
+        })
+      });
+      if(!res.ok){ setAnswer({ q, deterministic:"Couldn't reach the AI layer just now. Try a preset question for a computed answer.", narration:null, loading:false }); return; }
+      const data = await res.json();
+      const text = (data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("").trim();
+      setAnswer({ q, deterministic:null, narration:text||"No answer returned.", loading:false });
+      setFreeText("");
+    } catch {
+      setAnswer({ q, deterministic:"Something went wrong reaching the AI layer.", narration:null, loading:false });
+    }
+  };
+
+  const ask = async (q) => {
+    const deterministic = q.answer();
+    setAnswer({ q:q.label, deterministic, narration:null, loading: aiOn });
+
+    if(!aiOn) return;
+
+    // AI narration layer — grounded in the fact sheet, cannot invent numbers
+    try {
+      const apiKey = import.meta.env.VITE_ANTHROPIC_KEY;
+      if(!apiKey){ setAnswer(p=>({...p,loading:false})); return; }
+      const factSheet = buildFactSheet();
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method:"POST",
+        headers:{
+          "Content-Type":"application/json",
+          "x-api-key":apiKey,
+          "anthropic-version":"2023-06-01",
+          "anthropic-dangerous-direct-browser-access":"true",
+        },
+        body: JSON.stringify({
+          model:"claude-haiku-4-5-20251001",
+          max_tokens:220,
+          messages:[{
+            role:"user",
+            content:`You are a trading co-pilot for a futures trader. Below is a FACT SHEET of their real logged performance. Answer their question using ONLY these numbers — never invent stats. Be direct, specific, and concise (2-4 sentences). If the sample size is flagged low or insufficient, say so honestly rather than over-claiming. Speak like a sharp trading coach, not a chatbot.\n\nFACT SHEET:\n${factSheet}\n\nQUESTION: ${q.label}`
+          }]
+        })
+      });
+      if(!res.ok){ setAnswer(p=>({...p,loading:false})); return; }
+      const data = await res.json();
+      const text = (data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("").trim();
+      setAnswer(p=>({...p, narration:text||null, loading:false}));
+    } catch {
+      setAnswer(p=>({...p,loading:false}));
+    }
+  };
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <div>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:"#E2E8F0",letterSpacing:1}}>CO-PILOT</div>
+          <div style={{fontSize:8,color:"#4A5568",letterSpacing:1,marginTop:2}}>ASK ABOUT YOUR OWN TRADING · GROUNDED IN YOUR DATA</div>
+        </div>
+        <button onClick={()=>setAiOn(v=>!v)} style={{
+          background:aiOn?"#00FFB215":"#0D1117",
+          border:`1px solid ${aiOn?"#00FFB240":"#1E2530"}`,
+          borderRadius:3,padding:"5px 11px",fontSize:8,letterSpacing:1,
+          color:aiOn?"#00FFB2":"#4A5568",cursor:"pointer",fontFamily:"inherit"
+        }}>{aiOn?"◉ AI NARRATION ON":"○ AI OFF"}</button>
+      </div>
+
+      {/* Not enough data */}
+      {!a.ready && (
+        <div style={{background:"#0D1117",border:"1px solid #1E2530",borderRadius:4,padding:"20px",textAlign:"center"}}>
+          <div style={{fontSize:9,color:"#2A3545",letterSpacing:2,marginBottom:6}}>NO TRADES TO ANALYZE YET</div>
+          <div style={{fontSize:8,color:"#1E2530",lineHeight:1.6}}>Log trades with Quick Add or Capture.<br/>Your co-pilot needs data to learn how you trade.</div>
+        </div>
+      )}
+
+      {a.ready && (
+        <>
+          {/* ══ CO-PILOT BRIEFING ══════════════════════════════════ */}
+          <div style={{background:"#0D1117",border:"1px solid #1E2530",borderLeft:"3px solid #00FFB2",borderRadius:4,padding:"12px 14px",marginBottom:12}}>
+            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:"#E2E8F0",letterSpacing:1,marginBottom:8}}>{greeting}</div>
+
+            {/* Your Trading — live */}
+            <div style={{fontSize:7,letterSpacing:2,color:"#4A5568",marginBottom:6}}>YOUR TRADING</div>
+            <div style={{display:"flex",flexDirection:"column",gap:4,marginBottom:10}}>
+              {a.bestSetup && (
+                <div style={{fontSize:9,color:"#94A3B8"}}>
+                  Best setup: <span style={{color:sampleConfidence(a.bestSetup.count)==="insufficient"?"#FFD700":"#00FFB2"}}>{a.bestSetup.key}</span>
+                  {sampleConfidence(a.bestSetup.count)==="insufficient" && <span style={{color:"#FFD700"}}> (low data)</span>}
+                </div>
+              )}
+              {a.worstSetup && a.worstSetup.pnl<0 && (
+                <div style={{fontSize:9,color:"#94A3B8"}}>
+                  Biggest leak: <span style={{color:"#FF6B6B"}}>{a.worstSetup.key}</span> ({a.worstSetup.pnl>=0?"+":""}${a.worstSetup.pnl.toFixed(0)})
+                </div>
+              )}
+              {(()=>{
+                const total=a.grades.A+a.grades.B+a.grades.C;
+                if(!total) return null;
+                const score=Math.round((a.grades.A*100+a.grades.B*70+a.grades.C*40)/total);
+                return <div style={{fontSize:9,color:"#94A3B8"}}>Discipline: <span style={{color:score>=75?"#00FFB2":score>=55?"#FFD700":"#FF6B6B"}}>{score}/100</span></div>;
+              })()}
+            </div>
+
+            {/* Today's Market — honest placeholder */}
+            <div style={{fontSize:7,letterSpacing:2,color:"#4A5568",marginBottom:6}}>TODAY'S MARKET</div>
+            <div style={{background:"#080A0D",border:"1px dashed #1E2530",borderRadius:3,padding:"8px 10px",fontSize:8,color:"#2A3545",lineHeight:1.6}}>
+              Live market context (distance to prior high/low, ADR consumed) is coming soon — it needs a market-data connection. Your trading intelligence above is live now.
+            </div>
+          </div>
+
+          {/* Snapshot bar */}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6,marginBottom:12}}>
+            {[
+              ["TRADES", a.count, "#94A3B8"],
+              ["WIN RATE", `${a.winRate.toFixed(0)}%`, a.winRate>=50?"#00FFB2":a.winRate>=40?"#FFD700":"#FF6B6B"],
+              ["NET P&L", `${a.pnl>=0?"+":""}$${Math.abs(a.pnl)>=1000?(a.pnl/1000).toFixed(1)+"k":a.pnl.toFixed(0)}`, a.pnl>=0?"#00FFB2":"#FF6B6B"],
+              ["EXP/TRADE", `${a.expectancy>=0?"+":""}$${a.expectancy.toFixed(0)}`, a.expectancy>=0?"#00FFB2":"#FF6B6B"],
+            ].map(([l,v,c])=>(
+              <div key={l} style={{background:"#0D1117",border:"1px solid #1E2530",borderRadius:4,padding:"8px 9px",textAlign:"center"}}>
+                <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:16,color:c}}>{v}</div>
+                <div style={{fontSize:6,color:"#2A3545",letterSpacing:1,marginTop:2}}>{l}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Question buttons */}
+          <div style={{fontSize:8,letterSpacing:3,color:"#4A5568",marginBottom:8}}>ASK YOUR CO-PILOT</div>
+          <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:12}}>
+            {QUESTIONS.map(q=>(
+              <button key={q.id} onClick={()=>ask(q)} style={{
+                background: answer?.q===q.label ? "#00FFB210" : "#0D1117",
+                border:`1px solid ${answer?.q===q.label ? "#00FFB230" : "#1E2530"}`,
+                borderRadius:4,padding:"10px 12px",cursor:"pointer",textAlign:"left",
+                fontSize:10,color: answer?.q===q.label ? "#00FFB2" : "#94A3B8",
+                fontFamily:"inherit",transition:"all .15s",
+              }}>{q.label}</button>
+            ))}
+          </div>
+
+          {/* Free-text box */}
+          <div style={{display:"flex",gap:6,marginBottom:12}}>
+            <input
+              value={freeText}
+              onChange={e=>setFreeText(e.target.value)}
+              onKeyDown={e=>{ if(e.key==="Enter") askFreeText(); }}
+              placeholder="Ask about your trading…"
+              style={{
+                flex:1,background:"#0D1117",border:"1px solid #1E2530",borderRadius:4,
+                padding:"10px 12px",fontFamily:"inherit",fontSize:10,color:"#E2E8F0",
+                outline:"none",boxSizing:"border-box",
+              }}
+            />
+            <button onClick={askFreeText} disabled={!freeText.trim()} style={{
+              background:freeText.trim()?"#00FFB2":"#1E2530",border:"none",borderRadius:4,
+              padding:"0 16px",fontSize:9,fontWeight:700,letterSpacing:1,
+              color:freeText.trim()?"#06080B":"#4A5568",
+              cursor:freeText.trim()?"pointer":"not-allowed",fontFamily:"inherit",
+            }}>ASK</button>
+          </div>
+
+          {/* Answer panel */}
+          {answer && (
+            <div style={{background:"#0D1117",border:"1px solid #1E2530",borderLeft:"3px solid #00FFB2",borderRadius:4,padding:"12px 14px"}}>
+              <div style={{fontSize:7,letterSpacing:2,color:"#4A5568",marginBottom:6}}>{answer.q.toUpperCase()}</div>
+
+              {/* AI narration (if on and loaded) */}
+              {answer.narration && (
+                <div style={{fontSize:11,color:"#E2E8F0",lineHeight:1.7,marginBottom:answer.deterministic?10:0}}>
+                  {answer.narration}
+                </div>
+              )}
+
+              {/* Loading state */}
+              {answer.loading && (
+                <div style={{fontSize:9,color:"#4A5568",letterSpacing:1,marginBottom:10}}>Co-pilot thinking…</div>
+              )}
+
+              {/* Deterministic answer — always shown, the ground truth */}
+              <div style={{
+                fontSize: answer.narration?9:11,
+                color: answer.narration?"#64748B":"#E2E8F0",
+                lineHeight:1.7,
+                background: answer.narration?"#080A0D":"transparent",
+                borderRadius: answer.narration?3:0,
+                padding: answer.narration?"8px 10px":0,
+              }}>
+                {answer.narration && <span style={{fontSize:6,letterSpacing:1,color:"#2A3545",display:"block",marginBottom:3}}>VERIFIED NUMBERS</span>}
+                {answer.deterministic}
+              </div>
+            </div>
+          )}
+
+          <div style={{fontSize:7,color:"#2A3545",letterSpacing:1,marginTop:10,lineHeight:1.6}}>
+            Answers are computed from your logged trades. {aiOn?"AI narration rephrases the verified numbers — it cannot invent stats.":""} Statistical confidence is flagged by sample size.
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function TradingPlan({ user, onLogout }) {
 
   const [tab, setTab] = useState("pre");
@@ -1630,6 +1999,7 @@ function TradingPlan({ user, onLogout }) {
   const CAPTURE_TABS=[
     {id:"capture", icon:"⬡", label:"CAPTURE"},
     {id:"log",     icon:"◐", label:"TRADES"},
+    {id:"copilot", icon:"⭐", label:"CO-PILOT"},
     {id:"settings",icon:"⚙", label:"SETTINGS"},
   ];
   const TABS = mode==="cockpit" ? COCKPIT_TABS : CAPTURE_TABS;
@@ -3726,6 +4096,10 @@ function TradingPlan({ user, onLogout }) {
             <MarketLevels contractId={contractId} cc={cc}/>
             <TradingViewChart contractId={contractId} cc={cc}/>
           </>
+        )}
+
+        {tab==="copilot"&&(
+          <CoPilot trades={trades} userName={user?.email?.split("@")[0] || ""}/>
         )}
 
         {tab==="news"&&(<>
