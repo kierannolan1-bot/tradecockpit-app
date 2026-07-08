@@ -214,7 +214,7 @@ function AuthScreen({ onAuth }) {
                 <button onClick={() => { setMode("signup"); setError(""); setMessage(""); }} style={{
                   background: "none", border: "none", cursor: "pointer",
                   fontSize: 9, color: C.muted, letterSpacing: 1, fontFamily: mono,
-                }}>Don't have an account? <span style={{ color: C.green }}>Sign up free</span></button>
+                }}>Don't have an account? <span style={{ color: C.green }}>Sign up</span></button>
                 <button onClick={() => { setMode("reset"); setError(""); setMessage(""); }} style={{
                   background: "none", border: "none", cursor: "pointer",
                   fontSize: 9, color: C.dim, letterSpacing: 1, fontFamily: mono,
@@ -238,7 +238,7 @@ function AuthScreen({ onAuth }) {
 
         {/* Footer */}
         <div style={{ textAlign: "center", marginTop: 24, fontSize: 8, color: C.dim, letterSpacing: 1 }}>
-          Free forever plan · No credit card required<br/>
+          7-day trial · No charge today · then $19/month<br/>
           <span style={{ color: "#1E2530" }}>© 2026 TradeCockpit · tradecockpit.trade</span>
         </div>
       </div>
@@ -4995,17 +4995,159 @@ function TradingPlan({ user, onLogout }) {
 }
 
 // ── Main App with auth wrapper ───────────────────────────────
+// ── Stripe trial link with the user's identity attached ────
+// client_reference_id = their Supabase UUID → the webhook matches by it.
+const STRIPE_TRIAL_LINK = "https://buy.stripe.com/bJe5kDf4aaDi1TM30y7Re02";
+function buildTrialUrl(user) {
+  const base = STRIPE_TRIAL_LINK;
+  const params = new URLSearchParams();
+  if (user?.id)    params.set("client_reference_id", user.id);
+  if (user?.email) params.set("prefilled_email", user.email);
+  const qs = params.toString();
+  return qs ? `${base}?${qs}` : base;
+}
+
+// ── Trial gate — shown to logged-in users without an active plan ──
+function TrialGate({ user, planStatus, onLogout, onRecheck }) {
+  const [polling, setPolling] = useState(false);
+  const name = user?.email?.split("@")[0];
+  const displayName = name ? name.charAt(0).toUpperCase()+name.slice(1) : "";
+
+  // After the user returns from Stripe, poll Supabase for the plan to flip.
+  const startTrial = () => {
+    window.open(buildTrialUrl(user), "_blank");
+    setPolling(true);
+  };
+
+  useEffect(() => {
+    if (!polling) return;
+    let tries = 0;
+    const iv = setInterval(async () => {
+      tries++;
+      const ok = await onRecheck();      // returns true if plan now active/trialing
+      if (ok || tries > 40) {            // ~2 min max
+        clearInterval(iv);
+        setPolling(false);
+      }
+    }, 3000);
+    return () => clearInterval(iv);
+  }, [polling]);
+
+  const expired = planStatus === "canceled" || planStatus === "past_due" || planStatus === "unpaid";
+
+  return (
+    <div style={{minHeight:"100vh",background:"#06080B",fontFamily:"'IBM Plex Mono','Courier New',monospace",color:"#CBD5E1",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div style={{maxWidth:440,width:"100%"}}>
+        {/* Brand */}
+        <div style={{textAlign:"center",marginBottom:28}}>
+          <div style={{fontFamily:"Impact,sans-serif",fontSize:26,letterSpacing:3,color:"#CBD5E1"}}>
+            TRADE<span style={{color:"#00FFB2"}}>COCKPIT</span>
+          </div>
+          <div style={{fontSize:8,letterSpacing:3,color:"#4A5568",marginTop:4}}>THE EDGE IS IN THE PROCESS</div>
+        </div>
+
+        {/* Mason-fronted card */}
+        <div style={{background:"#0D1117",border:"1px solid #1E2530",borderTop:"2px solid #00FFB2",borderRadius:10,padding:"28px 26px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:18}}>
+            <div style={{width:40,height:40,borderRadius:"50%",background:"#00FFB215",border:"1px solid #00FFB240",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>⭐</div>
+            <div>
+              <div style={{fontFamily:"Impact,sans-serif",fontSize:18,letterSpacing:1,color:"#E2E8F0",lineHeight:1}}>MASON</div>
+              <div style={{fontSize:8,letterSpacing:2,color:"#4A5568",marginTop:3}}>YOUR TRADING MENTOR</div>
+            </div>
+          </div>
+
+          {expired ? (
+            <>
+              <p style={{fontSize:13,color:"#E2E8F0",lineHeight:1.7,marginBottom:10}}>
+                Welcome back{displayName?`, ${displayName}`:""}. Your access has lapsed.
+              </p>
+              <p style={{fontSize:12,color:"#64748B",lineHeight:1.7,marginBottom:22}}>
+                Reactivate to pick up where you left off — everything I've learned about your trading is still here.
+              </p>
+            </>
+          ) : (
+            <>
+              <p style={{fontSize:13,color:"#E2E8F0",lineHeight:1.7,marginBottom:10}}>
+                {displayName?`${displayName}, welcome to TradeCockpit.`:"Welcome to TradeCockpit."}
+              </p>
+              <p style={{fontSize:12,color:"#64748B",lineHeight:1.7,marginBottom:22}}>
+                I'm Mason. Let's start your 7-day trial so I can begin learning how you trade — and help you build the consistency that pays. You won't be charged today.
+              </p>
+            </>
+          )}
+
+          {polling ? (
+            <div style={{textAlign:"center",padding:"14px"}}>
+              <div style={{fontSize:9,letterSpacing:2,color:"#00FFB2",marginBottom:6}}>ACTIVATING YOUR TRIAL…</div>
+              <div style={{fontSize:10,color:"#4A5568",lineHeight:1.6}}>Complete checkout in the new tab. This unlocks automatically once done.</div>
+            </div>
+          ) : (
+            <button onClick={startTrial} style={{
+              width:"100%",background:"#00FFB2",color:"#06080B",border:"none",borderRadius:6,
+              padding:"14px",fontFamily:"inherit",fontSize:13,fontWeight:600,letterSpacing:1,cursor:"pointer"
+            }}>
+              {expired ? "Reactivate — $19/month" : "Start Your 7-Day Trial"}
+            </button>
+          )}
+
+          <div style={{fontSize:9,color:"#4A5568",textAlign:"center",marginTop:12,lineHeight:1.6}}>
+            No charge today · Cancel anytime during your trial · then $19/month
+          </div>
+
+          {polling && (
+            <button onClick={onRecheck} style={{width:"100%",background:"none",border:"1px solid #1E2530",borderRadius:5,padding:"9px",fontSize:9,letterSpacing:1,color:"#4A5568",cursor:"pointer",fontFamily:"inherit",marginTop:10}}>
+              I'VE COMPLETED CHECKOUT — CHECK NOW
+            </button>
+          )}
+        </div>
+
+        {/* Sign out */}
+        <div style={{textAlign:"center",marginTop:18}}>
+          <button onClick={onLogout} style={{background:"none",border:"none",color:"#4A5568",fontSize:10,letterSpacing:1,cursor:"pointer",fontFamily:"inherit"}}>
+            Sign out
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [user,    setUser]    = useState(null);
   const [loading, setLoading] = useState(true);
+  const [planStatus, setPlanStatus] = useState(undefined); // undefined = not yet loaded
+
+  // Read the user's plan status from Supabase
+  const fetchPlan = async (uid) => {
+    if (!uid) return null;
+    try {
+      const { data, error } = await supabase
+        .from("user_subscriptions")
+        .select("plan_status")
+        .eq("user_id", uid)
+        .single();
+      if (error) return null;
+      return data?.plan_status ?? "none";
+    } catch { return null; }
+  };
+
+  const loadPlan = async (u) => {
+    const status = await fetchPlan(u?.id);
+    setPlanStatus(status ?? "none");
+    return status === "trialing" || status === "active";
+  };
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      const u = session?.user ?? null;
+      setUser(u);
+      if (u) await loadPlan(u); else setPlanStatus(undefined);
       setLoading(false);
     });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      const u = session?.user ?? null;
+      setUser(u);
+      if (u) await loadPlan(u); else setPlanStatus(undefined);
       setLoading(false);
     });
     return () => subscription.unsubscribe();
@@ -5014,6 +5156,12 @@ export default function App() {
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setUser(null);
+    setPlanStatus(undefined);
+  };
+
+  const recheckPlan = async () => {
+    if (!user) return false;
+    return await loadPlan(user);
   };
 
   if (loading) return (
@@ -5029,6 +5177,16 @@ export default function App() {
 
   if (!user) return <AuthScreen onAuth={setUser} />;
 
+  // Logged in, but plan not yet loaded → brief loading
+  if (planStatus === undefined) return (
+    <div style={{minHeight:"100vh",background:"#06080B",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'IBM Plex Mono',monospace"}}>
+      <div style={{fontSize:8,letterSpacing:3,color:"#4A5568"}}>CHECKING YOUR ACCESS...</div>
+    </div>
+  );
+
+  // Logged in but no active plan → trial gate
+  const hasAccess = planStatus === "trialing" || planStatus === "active";
+  if (!hasAccess) return <TrialGate user={user} planStatus={planStatus} onLogout={handleLogout} onRecheck={recheckPlan} />;
+
   return <TradingPlan user={user} onLogout={handleLogout} />;
 }
-   
