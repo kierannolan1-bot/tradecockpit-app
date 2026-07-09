@@ -5138,19 +5138,27 @@ export default function App() {
   };
 
   useEffect(() => {
+    // Safety net: never let the app hang on the loading screen forever.
+    // If auth/plan checks stall (slow network, Supabase hiccup), fall through
+    // after 6s so the user at least reaches the login screen.
+    const failsafe = setTimeout(() => setLoading(false), 6000);
+
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       const u = session?.user ?? null;
       setUser(u);
       if (u) await loadPlan(u); else setPlanStatus(undefined);
       setLoading(false);
-    });
+      clearTimeout(failsafe);
+    }).catch(() => { setLoading(false); clearTimeout(failsafe); });
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       const u = session?.user ?? null;
       setUser(u);
       if (u) await loadPlan(u); else setPlanStatus(undefined);
       setLoading(false);
+      clearTimeout(failsafe);
     });
-    return () => subscription.unsubscribe();
+    return () => { subscription.unsubscribe(); clearTimeout(failsafe); };
   }, []);
 
   const handleLogout = async () => {
