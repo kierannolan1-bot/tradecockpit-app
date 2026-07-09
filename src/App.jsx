@@ -5555,19 +5555,39 @@ function TrialGate({ user, planStatus, onLogout, onRecheck }) {
   const name = user?.email?.split("@")[0];
   const displayName = name ? name.charAt(0).toUpperCase()+name.slice(1) : "";
 
-  // After the user returns from Stripe, poll Supabase for the plan to flip.
+  // Send the user to Stripe in the SAME tab. Configure the payment link's
+  // "After payment → Redirect to your website" to app.tradecockpit.trade so
+  // they land back here. Opening a new tab strands them on Stripe's
+  // thank-you page while the app sits forgotten in the background.
   const startTrial = () => {
-    window.open(buildTrialUrl(user), "_blank");
-    setPolling(true);
+    window.location.href = buildTrialUrl(user);
   };
+
+  // If we've just come back from Stripe, poll until the webhook flips the plan.
+  useEffect(() => {
+    const returned = sessionStorage.getItem("tc_checkout_started");
+    if (returned) setPolling(true);
+  }, []);
+
+  // Mark that checkout began, so on return we know to poll.
+  useEffect(() => {
+    const mark = () => sessionStorage.setItem("tc_checkout_started", "1");
+    window.addEventListener("beforeunload", mark);
+    return () => window.removeEventListener("beforeunload", mark);
+  }, []);
 
   useEffect(() => {
     if (!polling) return;
     let tries = 0;
     const iv = setInterval(async () => {
       tries++;
-      const ok = await onRecheck();      // returns true if plan now active/trialing
-      if (ok || tries > 40) {            // ~2 min max
+      const ok = await onRecheck();      // true once plan is trialing/active
+      if (ok) {
+        sessionStorage.removeItem("tc_checkout_started");
+        clearInterval(iv);
+        setPolling(false);
+      } else if (tries > 40) {           // ~2 min max, then stop and let them retry
+        sessionStorage.removeItem("tc_checkout_started");
         clearInterval(iv);
         setPolling(false);
       }
@@ -5626,7 +5646,7 @@ function TrialGate({ user, planStatus, onLogout, onRecheck }) {
           {polling ? (
             <div style={{textAlign:"center",padding:"14px"}}>
               <div style={{fontSize:9,letterSpacing:2,color:"#00FFB2",marginBottom:6}}>ACTIVATING YOUR TRIAL…</div>
-              <div style={{fontSize:10,color:"#4A5568",lineHeight:1.6}}>Complete checkout in the new tab. This unlocks automatically once done.</div>
+              <div style={{fontSize:10,color:"#4A5568",lineHeight:1.6}}>Confirming your subscription. This unlocks automatically in a moment.</div>
             </div>
           ) : (
             <button onClick={startTrial} style={{
