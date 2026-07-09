@@ -5664,7 +5664,8 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [planStatus, setPlanStatus] = useState(undefined); // undefined = not yet loaded
 
-  // Read the user's plan status from Supabase
+  // Read the user's plan status from Trading Memory's sibling table.
+  // maybeSingle() returns null (not an error) when no row exists.
   const fetchPlan = async (uid) => {
     if (!uid) return null;
     try {
@@ -5672,17 +5673,33 @@ export default function App() {
         .from("user_subscriptions")
         .select("plan_status")
         .eq("user_id", uid)
-        .single();
-      if (error) return null;
+        .maybeSingle();
+      if (error) { console.warn("[plan] fetch error:", error.message); return "none"; }
       return data?.plan_status ?? "none";
-    } catch { return null; }
+    } catch (e) { console.warn("[plan] fetch threw:", e); return "none"; }
   };
 
+  // Never let the plan check hang. If Supabase is slow or unreachable,
+  // resolve to 'none' after 5s so the user reaches the trial gate rather
+  // than sitting on "CHECKING YOUR ACCESS..." forever.
   const loadPlan = async (u) => {
-    const status = await fetchPlan(u?.id);
-    setPlanStatus(status ?? "none");
-    return status === "trialing" || status === "active";
+    if (!u?.id) { setPlanStatus("none"); return false; }
+    const timeout = new Promise(res => setTimeout(() => res("none"), 5000));
+    const status = await Promise.race([ fetchPlan(u.id), timeout ]);
+    const resolved = status ?? "none";
+    setPlanStatus(resolved);
+    return resolved === "trialing" || resolved === "active";
   };
+
+  // Hard stop: if we're logged in but planStatus never resolves for any
+  // reason, force it to 'none' after 7s so the user reaches the trial gate
+  // instead of staring at "CHECKING YOUR ACCESS..." forever.
+  useEffect(() => {
+    if (user && planStatus === undefined) {
+      const t = setTimeout(() => setPlanStatus("none"), 7000);
+      return () => clearTimeout(t);
+    }
+  }, [user, planStatus]);
 
   useEffect(() => {
     // Safety net: never let the app hang on the loading screen forever.
