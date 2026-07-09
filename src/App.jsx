@@ -6,6 +6,110 @@ const SUPABASE_URL  = 'https://ssazubuyypxxckdffngl.supabase.co';
 const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNzYXp1YnV5eXB4eGNrZGZmbmdsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY0NDg3NjMsImV4cCI6MjA5MjAyNDc2M30.jKxG9k4KDSNM4AqgzxRc1xm587lJ0KXNn-AJw-QSxCM';
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
 
+/* ============================================================
+ * TRADING MEMORY — the single source of truth.
+ * ------------------------------------------------------------
+ * Every read and write of trade data goes through these helpers.
+ * React state is a CACHE. Supabase is TRUTH.
+ * If Mason and My Edge ever disagree, someone bypassed this.
+ * ========================================================== */
+const TM = {
+  fromRow(row){
+    if(!row) return null;
+    return {
+      id: row.id, symbol: row.symbol, sym: row.symbol,
+      dir: row.direction, direction: row.direction,
+      pnl: row.pnl,
+      setup_type: row.setup_type, setup: row.setup_type,
+      session: row.session, grade: row.grade, notes: row.notes,
+      opened_at: row.opened_at, closed_at: row.closed_at,
+      date: row.trade_date, source: row.source,
+      contracts: row.contracts, entry: row.entry_price, stop: row.stop_price,
+      target: row.target_price, exit: row.exit_price,
+      planned_risk: row.planned_risk, actual_risk: row.actual_risk,
+      risk_amount: row.actual_risk,
+      review_completed: row.review_completed, created_at: row.created_at,
+    };
+  },
+  toRow(t, userId){
+    const num = v => (v===""||v==null||isNaN(parseFloat(v))) ? null : parseFloat(v);
+    return {
+      user_id: userId,
+      symbol: t.symbol || t.sym || null,
+      direction: t.dir || t.direction || null,
+      pnl: num(t.pnl),
+      setup_type: (t.setup_type || t.setup || null) || null,
+      session: t.session || null,
+      grade: t.grade ? String(t.grade).toUpperCase() : null,
+      notes: t.notes || null,
+      opened_at: t.opened_at || null,
+      closed_at: t.closed_at || new Date().toISOString(),
+      trade_date: t.date || new Date().toISOString().slice(0,10),
+      source: t.source || "quick_add",
+      contracts: num(t.contracts), entry_price: num(t.entry),
+      stop_price: num(t.stop), target_price: num(t.target), exit_price: num(t.exit),
+      planned_risk: num(t.planned_risk), actual_risk: num(t.actual_risk),
+      review_completed: !!t.review_completed,
+    };
+  },
+  async load(userId){
+    if(!userId) return [];
+    const { data, error } = await supabase.from("trades").select("*")
+      .eq("user_id", userId).order("closed_at",{ascending:false,nullsFirst:false});
+    if(error){ console.error("[TradingMemory] load:", error.message); return []; }
+    return (data||[]).map(TM.fromRow);
+  },
+  async save(userId, trade){
+    if(!userId) return { ok:false };
+    const { data, error } = await supabase.from("trades")
+      .insert(TM.toRow(trade,userId)).select().single();
+    if(error){ console.error("[TradingMemory] save:", error.message); return { ok:false, error:error.message }; }
+    return { ok:true, trade: TM.fromRow(data) };
+  },
+  async update(userId, tradeId, patch){
+    if(!userId||!tradeId) return { ok:false };
+    const row = TM.toRow(patch, userId); delete row.user_id;
+    // don't overwrite fields the patch didn't mention
+    Object.keys(row).forEach(k => { if(row[k]===null && !(k in patch)) delete row[k]; });
+    const { data, error } = await supabase.from("trades").update(row)
+      .eq("id",tradeId).eq("user_id",userId).select().single();
+    if(error){ console.error("[TradingMemory] update:", error.message); return { ok:false }; }
+    return { ok:true, trade: TM.fromRow(data) };
+  },
+  async remove(userId, tradeId){
+    const { error } = await supabase.from("trades").delete().eq("id",tradeId).eq("user_id",userId);
+    if(error){ console.error("[TradingMemory] delete:", error.message); return { ok:false }; }
+    return { ok:true };
+  },
+  async uploadScreenshot(userId, tradeId, file){
+    if(!userId||!tradeId||!file) return { ok:false };
+    const ext = (file.name?.split(".").pop()||"png").toLowerCase();
+    const path = `${userId}/${tradeId}/${Date.now()}.${ext}`;
+    const { error: upErr } = await supabase.storage.from("trade-screenshots")
+      .upload(path, file, { upsert:false, contentType:file.type||"image/png" });
+    if(upErr){ console.error("[TradingMemory] upload:", upErr.message); return { ok:false }; }
+    const { data: signed } = await supabase.storage.from("trade-screenshots")
+      .createSignedUrl(path, 60*60*24*365);
+    const { data, error } = await supabase.from("trade_screenshots")
+      .insert({ trade_id:tradeId, user_id:userId, image_url:signed?.signedUrl||"", storage_path:path })
+      .select().single();
+    if(error){ console.error("[TradingMemory] shot row:", error.message); return { ok:false }; }
+    return { ok:true, screenshot:data };
+  },
+  async loadScreenshots(userId){
+    if(!userId) return [];
+    const { data, error } = await supabase.from("trade_screenshots").select("*").eq("user_id",userId);
+    if(error){ console.error("[TradingMemory] shots:", error.message); return []; }
+    return data||[];
+  },
+  async inspector(userId){
+    const { data, error } = await supabase.from("trading_memory_inspector")
+      .select("*").eq("user_id",userId).order("trade_date",{ascending:false});
+    if(error){ console.error("[TradingMemory] inspector:", error.message); return []; }
+    return data||[];
+  },
+};
+
 const mono    = "'IBM Plex Mono','Courier New',monospace";
 const display = "'Impact','Arial Narrow',sans-serif";
 const C = {
@@ -1070,6 +1174,88 @@ function convertRange(rangeStr, tzOffset) {
   return rangeStr.split(" – ").map(t => convertGMT(t.split(" ")[0], tzOffset)).join(" – ");
 }
 
+/* ── TRADING MEMORY INSPECTOR (internal) ────────────────────
+ * Read-only view of exactly what Trading Memory knows about each
+ * trade, and which metrics it can legitimately feed. Grounds every
+ * insight and makes silent data bugs visible instead of invisible.
+ * Reached via Settings → "Memory Inspector".
+ * ======================================================== */
+function MemoryInspector({ userId, onClose }) {
+  const [rows, setRows]     = useState(null);
+  const [error, setError]   = useState(null);
+
+  useEffect(()=>{
+    (async()=>{
+      try { setRows(await TM.inspector(userId)); }
+      catch(e){ setError(String(e)); }
+    })();
+  },[userId]);
+
+  const C2 = { panel:"#0D1117", border:"#1E2530", dim:"#2A3545", muted:"#4A5568", text:"#E2E8F0", green:"#00FFB2", red:"#FF6B6B", gold:"#FFD700" };
+  const Flag = ({on,label}) => (
+    <span style={{fontSize:8,color:on?C2.green:C2.dim,marginRight:8}}>{on?"✓":"✕"} {label}</span>
+  );
+
+  return (
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <div>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,color:C2.text,letterSpacing:1}}>TRADING MEMORY INSPECTOR</div>
+          <div style={{fontSize:8,color:C2.muted,letterSpacing:1,marginTop:2}}>INTERNAL · WHAT MEMORY ACTUALLY KNOWS</div>
+        </div>
+        <button onClick={onClose} style={{background:"none",border:`1px solid ${C2.border}`,borderRadius:3,padding:"5px 11px",fontSize:8,letterSpacing:1,color:C2.muted,cursor:"pointer",fontFamily:"inherit"}}>← BACK</button>
+      </div>
+
+      {error && <div style={{fontSize:9,color:C2.red}}>Inspector failed: {error}</div>}
+      {!rows && !error && <div style={{fontSize:9,color:C2.muted,letterSpacing:1}}>READING MEMORY…</div>}
+      {rows && rows.length===0 && (
+        <div style={{background:C2.panel,border:`1px solid ${C2.border}`,borderRadius:6,padding:20,textAlign:"center",fontSize:10,color:C2.muted}}>
+          Trading Memory is empty. Log a trade to see it here.
+        </div>
+      )}
+
+      {rows && rows.length>0 && (
+        <>
+          <div style={{fontSize:8,color:C2.muted,marginBottom:8}}>{rows.length} trade{rows.length===1?"":"s"} in memory</div>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {rows.map(r=>(
+              <div key={r.trade_id} style={{background:C2.panel,border:`1px solid ${C2.border}`,borderRadius:6,padding:"12px 14px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+                  <div style={{fontSize:11,color:C2.text}}>
+                    {r.symbol||"—"} · {r.setup_type||<span style={{color:C2.gold}}>untagged</span>} · {r.session||"—"}
+                  </div>
+                  <div style={{fontSize:11,color:(r.pnl||0)>=0?C2.green:C2.red}}>
+                    {(r.pnl||0)>=0?"+":""}{r.pnl ?? "—"}
+                  </div>
+                </div>
+                <div style={{fontSize:7,color:C2.dim,letterSpacing:1,marginBottom:6}}>
+                  {r.trade_id} · {r.trade_date||"no date"} · {r.source||"?"}
+                </div>
+
+                <div style={{fontSize:7,letterSpacing:2,color:C2.dim,marginBottom:4}}>FEEDS</div>
+                <div style={{marginBottom:8}}>
+                  <Flag on={r.feeds_win_rate}            label="Win Rate"/>
+                  <Flag on={r.feeds_best_setup}          label="Best Setup"/>
+                  <Flag on={r.feeds_capture_discipline}  label="Capture Discipline"/>
+                  <Flag on={r.feeds_execution_grade}     label="Execution Grade"/>
+                  <Flag on={r.feeds_risk_discipline}     label="Risk Discipline"/>
+                </div>
+
+                {r.missing_fields?.length>0 && (
+                  <>
+                    <div style={{fontSize:7,letterSpacing:2,color:C2.dim,marginBottom:4}}>MISSING</div>
+                    <div style={{fontSize:8,color:C2.gold}}>{r.missing_fields.join(" · ")}</div>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function Confidence({ trades, captures, userName }) {
   const [period, setPeriod] = useState("week"); // week | month | all
 
@@ -2015,7 +2201,22 @@ function TradingPlan({ user, onLogout }) {
   const [checks,setChecks]= useState(Object.fromEntries(CHECKS.map(c=>[c.id,false])));
 
   // ── Trade log state ───────────────────────────────────────
+  // NOTE: local state is a CACHE. Trading Memory (Supabase) is truth.
   const [trades, setTrades] = useState([]);
+  const [memoryLoading, setMemoryLoading] = useState(true);
+  const [showInspector, setShowInspector] = useState(false);
+
+  // Hydrate from Trading Memory on login. Every feature reads this.
+  useEffect(()=>{
+    let cancelled = false;
+    (async ()=>{
+      if(!user?.id){ setMemoryLoading(false); return; }
+      const remembered = await TM.load(user.id);
+      if(!cancelled){ setTrades(remembered); setMemoryLoading(false); }
+    })();
+    return ()=>{ cancelled = true; };
+  },[user?.id]);
+
   const [tForm,  setTForm]  = useState({setup:"",dir:"long",entry:"",stop:"",target:"",exit:"",contracts:"1",grade:"A",notes:""});
   const [showForm,setShowForm]=useState(false);
   const [showQuick,setShowQuick]=useState(false);
@@ -2073,7 +2274,8 @@ function TradingPlan({ user, onLogout }) {
           if(d.levels)       setLevels(d.levels);
           if(d.news)         setNews(d.news);
           if(d.checks)       setChecks(d.checks);
-          if(d.trades)       setTrades(d.trades);
+          // NOTE: trades deliberately NOT loaded from localStorage.
+          // Trading Memory (Supabase) is the single source of truth.
           if(d.sessionNotes) setSessionNotes(d.sessionNotes);
           if(d.activeEvents)    setActiveEvents(d.activeEvents);
           if(d.entryPx)        setEntryPx(d.entryPx);
@@ -2336,22 +2538,44 @@ function TradingPlan({ user, onLogout }) {
   },[liveFeed, contractId]);
 
   // ── Import trades from CSV ───────────────────────────────────
-  const handleImport = (imported) => {
-    const next = [...trades, ...imported].slice(0, 2);
-    setTrades(next);
-    save({trades: next});
+  // NOTE: previously this silently truncated to 2 trades via .slice(0,2).
+  // Every imported trade now goes to Trading Memory.
+  const handleImport = async (imported) => {
     setShowImport(false);
+    if(!imported?.length || !user?.id) return;
+    const saved = [];
+    for(const t of imported){
+      const res = await TM.save(user.id, {...t, source:"import"});
+      if(res.ok) saved.push(res.trade);
+    }
+    if(saved.length) setTrades(prev=>[...saved, ...prev]);
+    if(saved.length < imported.length){
+      alert(`Imported ${saved.length} of ${imported.length} trades. Some failed to save.`);
+    }
   };
 
-  // ── Add trade ─────────────────────────────────────────────
-  const addTrade=()=>{
+  // ── Add trade (full form) ─────────────────────────────────
+  const addTrade=async ()=>{
     if(!tForm.entry)return;
     const now=new Date();
-    const t={...tForm,id:Date.now(),time:now.toTimeString().slice(0,5)};
-    const next=[...trades,t];
-    setTrades(next);setShowForm(false);
+    const date = now.toISOString().slice(0,10);
+    const time = now.toTimeString().slice(0,5);
+    const draft = {
+      ...tForm,
+      setup_type: tForm.setup,
+      symbol: contractId,
+      date,
+      session: getSession(date,time),
+      opened_at: now.toISOString(),
+      closed_at: now.toISOString(),
+      source: "full_capture",
+    };
+    setShowForm(false);
     setTForm({setup:"",dir:"long",entry:"",stop:"",target:"",exit:"",contracts:"1",grade:"A",notes:""});
-    save({trades:next});
+
+    const res = await TM.save(user?.id, draft);
+    if(res.ok){ setTrades(prev=>[{...res.trade,time}, ...prev]); }
+    else { alert("Couldn't save that trade. Check your connection and try again."); }
   };
 
   const tzObj    = TIMEZONES.find(t=>t.id===(settings.timezone||"UTC")) || TIMEZONES[0];
@@ -3451,25 +3675,38 @@ function TradingPlan({ user, onLogout }) {
                     const date = now.toISOString().slice(0,10);
                     const time = now.toTimeString().slice(0,5);
                     const sess = getSession(date, time);
-                    const next=[...trades,{
-                      id:          Date.now(),
+
+                    const draft = {
                       symbol:      quickForm.sym,
                       dir:         quickForm.dir,
                       pnl:         parseFloat(quickForm.pnl)||0,
                       setup_type:  quickForm.setup,
-                      setup:       quickForm.setup,
                       grade:       "B",
                       date,
-                      time,
                       session:     sess,
                       opened_at:   now.toISOString(),
                       closed_at:   now.toISOString(),
-                      entry:"",stop:"",target:"",exit:"",contracts:"1",notes:"",
-                    }];
-                    setTrades(next);
+                      source:      "quick_add",
+                    };
+
+                    // Optimistic: show it instantly (temp id), then reconcile
+                    // with the immutable UUID Trading Memory assigns.
+                    const tempId = `tmp_${Date.now()}`;
+                    setTrades(prev=>[{...draft, id:tempId, time}, ...prev]);
                     setLastSavedSetup(quickForm.setup);
                     setQuickForm({sym:contractId||"ES",dir:"long",pnl:"",setup:""});
                     setShowQuick(false);
+
+                    TM.save(user?.id, draft).then(res=>{
+                      if(res.ok){
+                        setTrades(prev=>prev.map(t=>t.id===tempId ? {...res.trade, time} : t));
+                      } else {
+                        // Write failed — remove the optimistic row rather than
+                        // leave a trade that Trading Memory doesn't know about.
+                        setTrades(prev=>prev.filter(t=>t.id!==tempId));
+                        alert("Couldn't save that trade. Check your connection and try again.");
+                      }
+                    });
                   }}
                   style={{
                     background:quickForm.pnl&&quickForm.setup?"#00FFB2":"#1E2530",
@@ -3665,8 +3902,9 @@ function TradingPlan({ user, onLogout }) {
                       <input placeholder="Exit price..." style={{flex:1,background:"#080A0D",border:"1px solid #1E2530",borderRadius:3,padding:"6px 9px",color:"#E2E8F0",fontSize:11,outline:"none"}}
                         onBlur={e=>{
                           if(!e.target.value)return;
-                          const next=trades.map(tr=>tr.id===t.id?{...tr,exit:e.target.value}:tr);
-                          setTrades(next);save({trades:next});
+                          const val = e.target.value;
+                          setTrades(prev=>prev.map(tr=>tr.id===t.id?{...tr,exit:val}:tr));
+                          TM.update(user?.id, t.id, { exit: val });
                         }}/>
                     </div>
                   </div>
@@ -4543,7 +4781,24 @@ function TradingPlan({ user, onLogout }) {
         </>)}
 
         {/* ═══ SETTINGS ═══════════════════════════════════════════ */}
-        {tab==="settings"&&(<>
+        {tab==="settings"&&showInspector&&(
+          <MemoryInspector userId={user?.id} onClose={()=>setShowInspector(false)}/>
+        )}
+
+        {tab==="settings"&&!showInspector&&(<>
+          {/* Trading Memory Inspector — internal */}
+          <div style={{background:"#0D1117",border:"1px solid #1E2530",borderRadius:4,padding:"12px 14px",marginBottom:12}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <div style={{fontSize:10,color:"#E2E8F0",marginBottom:3}}>Trading Memory</div>
+                <div style={{fontSize:8,color:"#4A5568"}}>{trades.length} trade{trades.length===1?"":"s"} remembered{memoryLoading?" · loading…":""}</div>
+              </div>
+              <button onClick={()=>setShowInspector(true)} style={{background:"none",border:"1px solid #1E2530",borderRadius:3,padding:"6px 12px",fontSize:8,letterSpacing:1,color:"#00FFB2",cursor:"pointer",fontFamily:"inherit"}}>
+                INSPECT
+              </button>
+            </div>
+          </div>
+
           {/* Data Feed */}
           <div style={{fontSize:8,letterSpacing:3,color:"#4A5568",marginBottom:8}}>CME DATA FEED</div>
           <div style={{background:"#0D1117",border:"1px solid #1E2530",borderLeft:"3px solid #38BDF8",borderRadius:4,padding:"14px 16px",marginBottom:10}}>
