@@ -1073,137 +1073,190 @@ function convertRange(rangeStr, tzOffset) {
 function Confidence({ trades, captures, userName }) {
   const [period, setPeriod] = useState("week"); // week | month | all
 
-  // ── Period filter ──────────────────────────────────────────
+  const C2 = { panel:"#0D1117", border:"#1E2530", dim:"#2A3545", muted:"#4A5568",
+               text:"#E2E8F0", green:"#00FFB2", red:"#FF6B6B", gold:"#FFD700" };
+
+  // ── Period windows ─────────────────────────────────────────
   const now = new Date();
-  const inPeriod = (t) => {
-    if (period === "all") return true;
+  const daysAgo = (t) => {
     const d = t.closed_at ? new Date(t.closed_at) : (t.date ? new Date(t.date) : null);
-    if (!d || isNaN(d)) return true; // don't drop trades with no date
-    const days = (now - d) / 86400000;
-    return period === "week" ? days <= 7 : days <= 31;
+    if (!d || isNaN(d)) return null;
+    return (now - d) / 86400000;
   };
+  const windowFor = (p) => p === "week" ? 7 : p === "month" ? 31 : Infinity;
 
   const all = (trades || []).filter(t => t && t.pnl !== undefined && t.pnl !== null);
-  const scoped = all.filter(inPeriod);
-  const n = scoped.length;
 
-  // ── Honest metrics — only what we actually capture ─────────
-  // Capture Discipline: did the trade get tagged with setup + session?
-  const tagged = scoped.filter(t => (t.setup_type || t.setup) && (t.session || t.time)).length;
-  const captureDiscipline = n ? Math.round((tagged / n) * 100) : null;
+  const inWindow = (t, lo, hi) => {
+    const d = daysAgo(t);
+    if (d === null) return lo === 0;      // undated trades count in the current window only
+    return d >= lo && d < hi;
+  };
 
-  // Review Discipline: does the trade carry a grade, notes, or a screenshot?
+  const win = windowFor(period);
+  const scoped = all.filter(t => inWindow(t, 0, win));
+  // Prior comparable window (only meaningful for week/month)
+  const prior  = period === "all" ? [] : all.filter(t => inWindow(t, win, win * 2));
+
+  // ── Metric computation (shared by current + prior) ─────────
   const capSet = new Set((captures || []).filter(c => c.matchedTrade).map(c => c.matchedTrade.id));
-  const reviewed = scoped.filter(t => t.grade || (t.notes && t.notes.trim()) || capSet.has(t.id)).length;
-  const reviewDiscipline = n ? Math.round((reviewed / n) * 100) : null;
+  const compute = (set) => {
+    const n = set.length;
+    if (!n) return { n:0 };
+    const tagged   = set.filter(t => (t.setup_type||t.setup) && (t.session||t.time)).length;
+    const reviewed = set.filter(t => t.grade || (t.notes && t.notes.trim()) || capSet.has(t.id)).length;
+    const graded   = set.filter(t => t.grade);
+    const gc = { A:0,B:0,C:0 };
+    graded.forEach(t => { const g=(t.grade||"").toUpperCase(); if(gc[g]!==undefined) gc[g]++; });
+    const gradeScore = graded.length ? Math.round((gc.A*100+gc.B*70+gc.C*40)/graded.length) : null;
+    const wins  = set.filter(t => (parseFloat(t.pnl)||0) > 0).length;
+    const netPnl = set.reduce((s,t)=>s+(parseFloat(t.pnl)||0),0);
 
-  // Execution Grade: the trader's own A/B/C self-assessment of execution.
-  const graded = scoped.filter(t => t.grade);
-  const gradeCounts = { A:0, B:0, C:0 };
-  graded.forEach(t => { const g = (t.grade||"").toUpperCase(); if (gradeCounts[g] !== undefined) gradeCounts[g]++; });
-  const gradeScore = graded.length
-    ? Math.round((gradeCounts.A*100 + gradeCounts.B*70 + gradeCounts.C*40) / graded.length)
-    : null;
+    const map = {};
+    set.forEach(t => {
+      const k = (t.setup_type||t.setup||"").toUpperCase();
+      if(!k) return;
+      if(!map[k]) map[k] = { key:k, count:0, wins:0, pnl:0 };
+      const s = map[k]; s.count++;
+      const p = parseFloat(t.pnl)||0; s.pnl += p; if(p>0) s.wins++;
+    });
+    const bySetup = Object.values(map).sort((a,b)=>b.pnl-a.pnl);
 
-  // Risk Discipline: needs planned risk — NOT captured. Stays locked, never faked.
+    return {
+      n,
+      captureDiscipline: Math.round((tagged/n)*100),
+      reviewDiscipline:  Math.round((reviewed/n)*100),
+      gradeScore, gc, gradedCount: graded.length,
+      tagged, reviewed,
+      winRate: Math.round((wins/n)*100), wins, netPnl,
+      bySetup,
+      bestSetup:   bySetup[0] && bySetup[0].pnl>0 ? bySetup[0] : null,
+      biggestLeak: (()=>{ const w=[...bySetup].reverse()[0]; return w && w.pnl<0 ? w : null; })(),
+    };
+  };
+
+  const cur = compute(scoped);
+  const pre = compute(prior);
+  const n = cur.n || 0;
+
+  // Risk discipline needs planned risk — not captured. Never faked.
   const riskDataExists = scoped.some(t => t.planned_risk != null && t.risk_amount != null);
 
-  // ── Edge snapshot ─────────────────────────────────────────
-  const bySetupMap = {};
-  scoped.forEach(t => {
-    const k = (t.setup_type || t.setup || "").toUpperCase();
-    if (!k) return;
-    if (!bySetupMap[k]) bySetupMap[k] = { key:k, count:0, wins:0, pnl:0 };
-    const s = bySetupMap[k];
-    s.count++;
-    const p = parseFloat(t.pnl) || 0;
-    s.pnl += p;
-    if (p > 0) s.wins++;
-  });
-  const bySetup = Object.values(bySetupMap).sort((a,b) => b.pnl - a.pnl);
-  const bestSetup  = bySetup[0] && bySetup[0].pnl > 0 ? bySetup[0] : null;
-  const worstSetup = [...bySetup].reverse()[0];
-  const biggestLeak = worstSetup && worstSetup.pnl < 0 ? worstSetup : null;
+  // ── Evidence strength ──────────────────────────────────────
+  const evidence = n >= 20 ? { label:"Strong",     bars:10, note:`${n} comparable trades`, color:C2.green }
+                 : n >= 8  ? { label:"Developing", bars:6,  note:`${n} trades — building`,  color:C2.gold }
+                 : n >= 1  ? { label:"Limited",    bars:3,  note:`Only ${n} trade${n===1?"":"s"}`, color:C2.red }
+                           : { label:"None",       bars:0,  note:"No trades yet",           color:C2.muted };
 
-  const netPnl  = scoped.reduce((s,t) => s + (parseFloat(t.pnl)||0), 0);
-  const wins    = scoped.filter(t => (parseFloat(t.pnl)||0) > 0).length;
-  const winRate = n ? Math.round((wins / n) * 100) : null;
+  // ── Delta helper (Since Last Week/Month) ───────────────────
+  const delta = (curVal, preVal) => {
+    if (curVal == null || preVal == null || !pre.n) return null;
+    const d = curVal - preVal;
+    if (d === 0) return null;
+    return d;
+  };
+  const dCapture = delta(cur.captureDiscipline, pre.captureDiscipline);
+  const dReview  = delta(cur.reviewDiscipline,  pre.reviewDiscipline);
+  const dGrade   = delta(cur.gradeScore,        pre.gradeScore);
+  const hasDeltas = pre.n > 0 && (dCapture!=null || dReview!=null || dGrade!=null);
 
-  // ── Evidence strength (0-7 Limited · 8-19 Developing · 20+ Strong) ──
-  const evidence = n >= 20 ? { label:"Strong",     bars:10, note:`${n} trades analysed` }
-                 : n >= 8  ? { label:"Developing", bars:6,  note:`${n} trades — building` }
-                 : n >= 1  ? { label:"Limited",    bars:3,  note:`Only ${n} trade${n===1?"":"s"} in this period` }
-                           : { label:"None",       bars:0,  note:"No trades in this period" };
+  // ── Actions — every metric leads to a next step ────────────
+  const untagged   = n - (cur.tagged   || 0);
+  const unreviewed = n - (cur.reviewed || 0);
 
-  // ── Current focus — rule-based, grounded in real numbers ───
+  const actionCapture = !n ? "Log your first trade."
+    : untagged > 0 ? `Tag ${untagged} trade${untagged===1?"":"s"} with a setup and session.`
+    : "Every trade tagged. Keep it up.";
+
+  const actionReview = !n ? "Log your first trade."
+    : unreviewed > 0 ? `Complete reviews for ${unreviewed} trade${unreviewed===1?"":"s"}.`
+    : "Every trade reviewed. Strong discipline.";
+
+  const actionGrade = !cur.gradedCount ? "Grade your executions to track decision quality."
+    : cur.gc.C > 0 ? `Review your ${cur.gc.C} C-grade execution${cur.gc.C===1?"":"s"}.`
+    : "Execution grades holding. Protect the standard.";
+
+  const actionEvidence = n >= 20 ? "Sample is strong. Patterns here are reliable."
+    : n >= 8 ? `Log ${20-n} more trades for strong evidence.`
+    : `Log ${8-n} more trade${8-n===1?"":"s"} before changing strategy.`;
+
+  const actionBest = cur.bestSetup
+    ? (cur.bestSetup.count >= 8 ? `Keep taking ${cur.bestSetup.key} under the same conditions.` : `Promising — log more ${cur.bestSetup.key} before leaning in.`)
+    : "No profitable setup yet. Keep logging.";
+
+  const actionLeak = cur.biggestLeak
+    ? `Review your last ${Math.min(5, cur.biggestLeak.count)} losing ${cur.biggestLeak.key} trades.`
+    : "No clear leak. Keep logging.";
+
+  // ── Today's focus — single highest-leverage action ─────────
   const focus = (() => {
     if (!n) return "Log your first trade. The process begins with one clean capture.";
-    if (captureDiscipline !== null && captureDiscipline < 70) return "Tag every trade with a setup and session — clean data is what makes the rest possible.";
-    if (reviewDiscipline !== null && reviewDiscipline < 50) return "Review your trades after the session. Untagged trades teach you nothing.";
-    if (biggestLeak && biggestLeak.count >= 5) return `Reduce size or pause ${biggestLeak.key} — it's your clearest current leak.`;
-    if (gradeScore !== null && gradeScore < 60) return "Too many C-grade executions. Tighten entry criteria before adding size.";
-    if (bestSetup && n >= 8) return `Keep focusing on ${bestSetup.key} — that's where your edge currently lives.`;
+    if (cur.captureDiscipline < 70) return "Tag every trade with a setup and session — clean data makes everything else possible.";
+    if (cur.reviewDiscipline < 50) return "Review your trades after the session. Untagged trades teach you nothing.";
+    if (cur.biggestLeak && cur.biggestLeak.count >= 5) return `Reduce size or pause ${cur.biggestLeak.key} — it's your clearest current leak.`;
+    if (cur.gradeScore !== null && cur.gradeScore < 60) return "Too many C-grade executions. Tighten entry criteria before adding size.";
+    if (cur.bestSetup && n >= 8) return `Keep focusing on ${cur.bestSetup.key} — that's where your edge currently lives.`;
     return "Keep capturing clean data. Patterns need trades before they can be trusted.";
   })();
 
-  // ── Mason's supporting line — grounded, honest when thin ───
+  // ── Mason — one sentence, grounded, honest when thin ───────
   const masonLine = (() => {
     if (!n) return "Start with one clean capture. The process begins with the first trade.";
-    if (n < 8) return `I need more completed trades before drawing conclusions. You've logged ${n} — keep capturing every trade.`;
+    if (n < 8) return `I need more completed trades before drawing conclusions — you've logged ${n}.`;
     const bits = [];
-    if (captureDiscipline >= 80) bits.push("your capture discipline is strong");
-    if (bestSetup) bits.push(`your strongest results are coming from ${bestSetup.key}`);
-    if (biggestLeak) bits.push(`${biggestLeak.key} is costing you`);
-    return bits.length ? `Based on your trading history, ${bits.join(", and ")}.` : "The available data suggests you're building a consistent process. Keep going.";
+    if (cur.captureDiscipline >= 80) bits.push("your capture discipline is strong");
+    if (cur.bestSetup) bits.push(`your strongest results come from ${cur.bestSetup.key}`);
+    if (cur.biggestLeak) bits.push(`${cur.biggestLeak.key} is costing you`);
+    return bits.length ? `Based on your trading history, ${bits.join(", and ")}.` : "The available data suggests a consistent process. Keep going.";
   })();
 
-  const C2 = { panel:"#0D1117", border:"#1E2530", dim:"#2A3545", muted:"#4A5568", text:"#E2E8F0", green:"#00FFB2", red:"#FF6B6B", gold:"#FFD700" };
   const pctColor = (v) => v == null ? C2.muted : v >= 80 ? C2.green : v >= 55 ? C2.gold : C2.red;
+  const periodLabel = period === "week" ? "week" : period === "month" ? "month" : "all time";
 
   // ── Empty state ───────────────────────────────────────────
   if (!all.length) {
     return (
       <div>
-        <div style={{fontSize:8,letterSpacing:3,color:C2.muted,marginBottom:10}}>TRADING SNAPSHOT</div>
+        <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:C2.text,letterSpacing:1,marginBottom:3}}>MY EDGE</div>
+        <div style={{fontSize:8,color:C2.muted,letterSpacing:1,marginBottom:14}}>WHERE IS MY EDGE RIGHT NOW?</div>
         <div style={{background:C2.panel,border:`1px solid ${C2.border}`,borderRadius:6,padding:"30px 24px",textAlign:"center"}}>
-          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,color:C2.text,letterSpacing:1,marginBottom:8}}>NO CONFIDENCE DATA YET</div>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:19,color:C2.text,letterSpacing:1,marginBottom:8}}>NO EDGE DATA YET</div>
           <div style={{fontSize:10,color:C2.muted,lineHeight:1.8,maxWidth:340,margin:"0 auto 18px"}}>
             Log your first trade to start building your trading profile.
           </div>
           <div style={{background:"#080A0D",border:`1px dashed ${C2.border}`,borderRadius:4,padding:"10px 12px",fontSize:9,color:C2.dim,lineHeight:1.7,maxWidth:360,margin:"0 auto"}}>
-            <span style={{color:C2.green}}>Mason:</span> Start with one clean capture. The process begins with the first trade.
+            <span style={{color:C2.green}}>MASON:</span> Start with one clean capture. The process begins with the first trade.
           </div>
         </div>
       </div>
     );
   }
 
-  const Card = ({label, value, suffix, sub, color, locked, unlockText}) => (
-    <div style={{background:C2.panel,border:`1px solid ${locked?C2.border:C2.border}`,borderRadius:6,padding:"14px 15px",opacity:locked?0.72:1}}>
-      <div style={{fontSize:7,letterSpacing:2,color:C2.dim,marginBottom:6}}>{label}</div>
+  // Card with mandatory action line
+  const Card = ({icon, label, value, suffix, sub, color, action, locked, unlockAction}) => (
+    <div style={{background:C2.panel,border:`1px solid ${C2.border}`,borderRadius:6,padding:"13px 14px",opacity:locked?0.72:1,display:"flex",flexDirection:"column"}}>
+      <div style={{fontSize:7,letterSpacing:2,color:C2.dim,marginBottom:6}}>{icon} {label}</div>
       {locked ? (
-        <>
-          <div style={{fontSize:13,color:C2.muted,marginBottom:4}}>—</div>
-          <div style={{fontSize:8,color:C2.muted,lineHeight:1.6}}>{unlockText}</div>
-        </>
+        <div style={{fontSize:14,color:C2.muted,marginBottom:6}}>—</div>
       ) : (
-        <>
-          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,letterSpacing:1,color:color||C2.text,lineHeight:1}}>
-            {value}{suffix && <span style={{fontSize:13,color:C2.muted}}>{suffix}</span>}
-          </div>
-          {sub && <div style={{fontSize:8,color:C2.muted,marginTop:5,lineHeight:1.5}}>{sub}</div>}
-        </>
+        <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:25,letterSpacing:1,color:color||C2.text,lineHeight:1,marginBottom:sub?4:6}}>
+          {value}{suffix && <span style={{fontSize:12,color:C2.muted}}>{suffix}</span>}
+        </div>
       )}
+      {sub && !locked && <div style={{fontSize:8,color:C2.muted,marginBottom:6,lineHeight:1.5}}>{sub}</div>}
+      <div style={{marginTop:"auto",paddingTop:6,borderTop:`1px solid ${C2.border}`,fontSize:8,color:locked?C2.muted:C2.green,lineHeight:1.5}}>
+        {locked ? unlockAction : action}
+      </div>
     </div>
   );
 
   return (
     <div>
-      {/* Header + period toggle */}
+      {/* Header */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
         <div>
-          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:C2.text,letterSpacing:1,lineHeight:1}}>TRADING SNAPSHOT</div>
-          <div style={{fontSize:8,color:C2.muted,letterSpacing:1,marginTop:3}}>HOW AM I TRADING RIGHT NOW?</div>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:C2.text,letterSpacing:1,lineHeight:1}}>MY EDGE</div>
+          <div style={{fontSize:8,color:C2.muted,letterSpacing:1,marginTop:3}}>WHERE IS MY EDGE RIGHT NOW?</div>
         </div>
         <div style={{display:"flex",gap:4}}>
           {[["week","WEEK"],["month","MONTH"],["all","ALL"]].map(([k,l])=>(
@@ -1217,98 +1270,91 @@ function Confidence({ trades, captures, userName }) {
         </div>
       </div>
 
-      {/* Evidence strength — leads, because it frames everything below */}
-      <div style={{background:C2.panel,border:`1px solid ${C2.border}`,borderRadius:6,padding:"12px 14px",marginBottom:10}}>
-        <div style={{fontSize:7,letterSpacing:2,color:C2.dim,marginBottom:6}}>EVIDENCE STRENGTH</div>
+      {/* Since last period — only when there's genuine prior data */}
+      {hasDeltas && (
+        <div style={{background:"#080A0D",border:`1px solid ${C2.border}`,borderRadius:6,padding:"10px 13px",marginBottom:10}}>
+          <div style={{fontSize:7,letterSpacing:2,color:C2.dim,marginBottom:7}}>SINCE LAST {period.toUpperCase()}</div>
+          <div style={{display:"flex",gap:18,flexWrap:"wrap"}}>
+            {[["Capture Discipline",dCapture],["Review Discipline",dReview],["Execution Grade",dGrade]].map(([l,d])=>
+              d==null ? null : (
+                <div key={l} style={{fontSize:9,color:C2.muted}}>
+                  <span style={{color:d>0?C2.green:C2.red,marginRight:4}}>{d>0?"↑":"↓"}</span>
+                  {l} <span style={{color:d>0?C2.green:C2.red}}>{d>0?"+":""}{d}{l==="Execution Grade"?"":"%"}</span>
+                </div>
+              )
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Evidence strength — frames everything below */}
+      <div style={{background:C2.panel,border:`1px solid ${C2.border}`,borderRadius:6,padding:"12px 14px",marginBottom:8}}>
+        <div style={{fontSize:7,letterSpacing:2,color:C2.dim,marginBottom:6}}>🟢 EVIDENCE STRENGTH</div>
         <div style={{display:"flex",gap:2,marginBottom:6}}>
           {Array.from({length:10}).map((_,i)=>(
-            <div key={i} style={{flex:1,height:6,borderRadius:1,background:i<evidence.bars ? (evidence.bars>=10?C2.green:evidence.bars>=6?C2.gold:C2.red) : C2.border}}/>
+            <div key={i} style={{flex:1,height:6,borderRadius:1,background:i<evidence.bars?evidence.color:C2.border}}/>
           ))}
         </div>
-        <div style={{fontSize:9,color:evidence.bars>=10?C2.green:evidence.bars>=6?C2.gold:C2.red,fontWeight:600}}>
+        <div style={{fontSize:9,color:evidence.color,fontWeight:600,marginBottom:6}}>
           {evidence.label}<span style={{color:C2.muted,fontWeight:400}}> · {evidence.note}</span>
         </div>
-        {n < 8 && n > 0 && (
-          <div style={{fontSize:8,color:C2.muted,marginTop:6,lineHeight:1.6}}>
-            Basic stats shown below. Patterns aren't reliable at this sample size yet.
-          </div>
-        )}
+        <div style={{paddingTop:6,borderTop:`1px solid ${C2.border}`,fontSize:8,color:C2.green,lineHeight:1.5}}>{actionEvidence}</div>
       </div>
 
-      {/* Core discipline metrics */}
+      {/* Edge */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:8,marginBottom:8}}>
-        <Card label="CAPTURE DISCIPLINE" value={captureDiscipline ?? "—"} suffix={captureDiscipline!=null?"%":""}
-              sub={`${tagged} of ${n} trades tagged with setup + session`} color={pctColor(captureDiscipline)}/>
-        <Card label="REVIEW DISCIPLINE" value={reviewDiscipline ?? "—"} suffix={reviewDiscipline!=null?"%":""}
-              sub={`${reviewed} of ${n} reviewed, graded or annotated`} color={pctColor(reviewDiscipline)}/>
+        <Card icon="🎯" label="BEST SETUP"
+              value={cur.bestSetup ? cur.bestSetup.key : "—"}
+              sub={cur.bestSetup ? `${cur.bestSetup.count>=8?`${Math.round(cur.bestSetup.wins/cur.bestSetup.count*100)}% win rate · `:""}+$${cur.bestSetup.pnl.toFixed(0)} · ${cur.bestSetup.count} trades` : "No profitable setup yet"}
+              color={cur.bestSetup?C2.green:C2.muted} action={actionBest}/>
+        <Card icon="⚠️" label="BIGGEST LEAK"
+              value={cur.biggestLeak ? cur.biggestLeak.key : "—"}
+              sub={cur.biggestLeak ? `-$${Math.abs(cur.biggestLeak.pnl).toFixed(0)} · ${cur.biggestLeak.count} trades` : "No clear leak"}
+              color={cur.biggestLeak?C2.red:C2.muted} action={actionLeak}/>
+      </div>
+
+      {/* Discipline */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:8,marginBottom:8}}>
+        <Card icon="📊" label="CAPTURE DISCIPLINE" value={cur.captureDiscipline} suffix="%"
+              sub={`${cur.tagged} of ${n} tagged`} color={pctColor(cur.captureDiscipline)} action={actionCapture}/>
+        <Card icon="📝" label="REVIEW DISCIPLINE" value={cur.reviewDiscipline} suffix="%"
+              sub={`${cur.reviewed} of ${n} reviewed`} color={pctColor(cur.reviewDiscipline)} action={actionReview}/>
       </div>
 
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:8,marginBottom:8}}>
-        <Card label="EXECUTION GRADE" value={gradeScore ?? "—"} suffix={gradeScore!=null?"/100":""}
-              sub={graded.length?`A:${gradeCounts.A} · B:${gradeCounts.B} · C:${gradeCounts.C} — your own assessment`:"Grade your trades to track execution"}
-              color={pctColor(gradeScore)}/>
-        <Card label="RISK DISCIPLINE" locked={!riskDataExists}
-              unlockText="Unlock by adding planned risk during trade reviews."/>
+        <Card icon="⭐" label="EXECUTION GRADE"
+              value={cur.gradeScore ?? "—"} suffix={cur.gradeScore!=null?"/100":""}
+              sub={cur.gradedCount?`A:${cur.gc.A} · B:${cur.gc.B} · C:${cur.gc.C} — your own assessment`:"Not graded yet"}
+              color={pctColor(cur.gradeScore)} action={actionGrade}/>
+        <Card icon="🛡️" label="RISK DISCIPLINE" locked={!riskDataExists}
+              unlockAction="Unlock by adding planned risk during trade reviews."/>
       </div>
 
       {/* Results */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:8,marginBottom:10}}>
-        <Card label="WIN RATE" value={winRate ?? "—"} suffix={winRate!=null?"%":""}
-              sub={`${wins} of ${n} trades`} color={winRate!=null && winRate>=50?C2.green:C2.red}/>
-        <Card label="NET P&L" value={`${netPnl>=0?"+":"-"}$${Math.abs(netPnl).toFixed(0)}`}
-              sub={period==="week"?"this week":period==="month"?"this month":"all time"}
-              color={netPnl>=0?C2.green:C2.red}/>
+        <Card icon="📈" label="WIN RATE" value={cur.winRate} suffix="%"
+              sub={`${cur.wins} of ${n} trades`} color={cur.winRate>=50?C2.green:C2.red}
+              action={cur.winRate>=50?"Protect what's working.":"Focus on your strongest setup only."}/>
+        <Card icon="💰" label="NET P&L" value={`${cur.netPnl>=0?"+":"-"}$${Math.abs(cur.netPnl).toFixed(0)}`}
+              sub={`this ${periodLabel}`} color={cur.netPnl>=0?C2.green:C2.red}
+              action={cur.netPnl>=0?"Consistency compounds. Keep the process.":"Cut the leak before adding size."}/>
       </div>
 
-      {/* Edge snapshot */}
-      <div style={{fontSize:8,letterSpacing:3,color:C2.muted,marginBottom:8}}>EDGE SNAPSHOT</div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:8,marginBottom:10}}>
-        <div style={{background:C2.panel,border:`1px solid ${C2.border}`,borderRadius:6,padding:"14px 15px"}}>
-          <div style={{fontSize:7,letterSpacing:2,color:C2.dim,marginBottom:6}}>BEST SETUP</div>
-          {bestSetup ? (
-            <>
-              <div style={{fontSize:13,color:C2.green,fontWeight:600,marginBottom:4}}>{bestSetup.key}</div>
-              <div style={{fontSize:9,color:C2.muted,lineHeight:1.6}}>
-                {bestSetup.count>=8 && <>Win rate: {Math.round(bestSetup.wins/bestSetup.count*100)}%<br/></>}
-                Net: +${bestSetup.pnl.toFixed(0)} · {bestSetup.count} trade{bestSetup.count===1?"":"s"}
-                {bestSetup.count<8 && <><br/><span style={{color:C2.gold}}>Sample too small to be reliable</span></>}
-              </div>
-            </>
-          ) : (
-            <div style={{fontSize:9,color:C2.muted,lineHeight:1.7}}>No profitable setup yet.<br/>Keep logging trades.</div>
-          )}
-        </div>
-        <div style={{background:C2.panel,border:`1px solid ${C2.border}`,borderRadius:6,padding:"14px 15px"}}>
-          <div style={{fontSize:7,letterSpacing:2,color:C2.dim,marginBottom:6}}>BIGGEST LEAK</div>
-          {biggestLeak ? (
-            <>
-              <div style={{fontSize:13,color:C2.red,fontWeight:600,marginBottom:4}}>{biggestLeak.key}</div>
-              <div style={{fontSize:9,color:C2.muted,lineHeight:1.6}}>
-                Net: -${Math.abs(biggestLeak.pnl).toFixed(0)} · {biggestLeak.count} trade{biggestLeak.count===1?"":"s"}
-                {biggestLeak.count<5 && <><br/><span style={{color:C2.gold}}>Watch it — small sample</span></>}
-              </div>
-            </>
-          ) : (
-            <div style={{fontSize:9,color:C2.muted,lineHeight:1.7}}>No clear leak yet.<br/>Keep logging trades.</div>
-          )}
-        </div>
-      </div>
-
-      {/* Current focus */}
-      <div style={{background:C2.panel,border:`1px solid ${C2.border}`,borderLeft:`3px solid ${C2.green}`,borderRadius:6,padding:"12px 14px",marginBottom:10}}>
-        <div style={{fontSize:7,letterSpacing:2,color:C2.dim,marginBottom:5}}>CURRENT FOCUS</div>
+      {/* Today's focus */}
+      <div style={{background:C2.panel,border:`1px solid ${C2.border}`,borderLeft:`3px solid ${C2.green}`,borderRadius:6,padding:"12px 14px",marginBottom:8}}>
+        <div style={{fontSize:7,letterSpacing:2,color:C2.dim,marginBottom:5}}>🎯 TODAY'S FOCUS</div>
         <div style={{fontSize:11,color:C2.text,lineHeight:1.6}}>{focus}</div>
       </div>
 
-      {/* Mason — supporting, not dominating */}
+      {/* Mason — one sentence, the voice of the dashboard */}
       <div style={{background:"#080A0D",border:`1px solid ${C2.border}`,borderRadius:6,padding:"11px 13px"}}>
         <div style={{fontSize:8,color:C2.muted,lineHeight:1.7}}>
-          <span style={{color:C2.green,letterSpacing:1}}>MASON:</span> {masonLine}
+          <span style={{color:C2.green,letterSpacing:1}}>💬 MASON:</span> {masonLine}
         </div>
       </div>
 
       <div style={{fontSize:7,color:C2.dim,letterSpacing:1,marginTop:12,lineHeight:1.6}}>
-        These metrics are computed only from what you've logged. Nothing here is estimated or inferred.
+        Computed only from what you've logged. Nothing here is estimated or inferred.
       </div>
     </div>
   );
@@ -2328,7 +2374,7 @@ function TradingPlan({ user, onLogout }) {
   const CAPTURE_TABS=[
     {id:"capture",    icon:"⬡", label:"CAPTURE"},
     {id:"log",        icon:"◐", label:"TRADES"},
-    {id:"confidence", icon:"◎", label:"CONFIDENCE"},
+    {id:"confidence", icon:"◎", label:"MY EDGE"},
     {id:"copilot",    icon:"⭐", label:"MASON"},
     {id:"settings",   icon:"⚙", label:"SETTINGS"},
   ];
